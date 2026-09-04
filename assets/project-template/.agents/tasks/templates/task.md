@@ -1,23 +1,41 @@
 # Task title
 
 - ID: `YYYYMMDD-short-slug`
+- Mode: `LIGHT | STANDARD | STRICT`
 - Status: `todo | in-progress | blocked | in-review | done | cancelled`
-- Delivery gate: `not-applicable | pending | passed | risk-accepted`
-- Status detail:
-- Owner:
-- Reviewer:
 - Created: `YYYY-MM-DD`
 - Updated: `YYYY-MM-DD`
-- Branch:
-- Base ref / merge-base:
-- Source commit:
-- Branch history:
 - Affected paths:
-- Architecture impact: `none | documentation-only | architecture-change`
-- Architecture-change record:
+- Acceptance criteria: see section below
+- Validation: pending
+- Architecture impact: `none | possible | confirmed`
+
+<!-- STANDARD and STRICT metadata. Remove or leave blank for LIGHT unless policy requires it. -->
+- Branch:
+- Base ref:
+- Source commit:
+- Risks: see section below
+- Dependencies:
+- Related architecture records:
+- Review notes:
+
+<!-- STRICT metadata. Remove or leave blank for LIGHT/STANDARD unless policy requires it. -->
+- Owner:
+- Reviewer:
+- Delivery gate: `not-applicable | pending | passed | risk-accepted`
+- Merge-base:
+- Current head:
+- Rollout:
+- Rollback:
+- Evidence:
 - Data classification: `internal`
 - Provenance: `project-authored`
 - Executable: `false`
+
+<!-- Optional cross-record links. -->
+- Status detail:
+- Branch history:
+- Architecture-change record:
 
 ## Goal and scope
 

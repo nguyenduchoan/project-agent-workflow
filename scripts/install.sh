@@ -8,7 +8,7 @@ project_argument=""
 
 usage() {
   printf '%s\n' \
-    "Usage: install.sh [--dry-run] [--project <path>]" \
+    "Usage: install.sh [--dry-run] [--project <path> | <path>]" \
     "" \
     "Install this skill and its generic workflow templates under <repo>/.agents." \
     "The target must be a Git repository. The root .gitignore is updated so" \
@@ -40,8 +40,13 @@ while [ "$#" -gt 0 ]; do
       usage
       exit 0
       ;;
-    *)
+    -*)
       die "unknown argument '$1'; use --help for usage"
+      ;;
+    *)
+      [ -z "$project_argument" ] || die "project path may be specified only once"
+      project_argument=$1
+      shift
       ;;
   esac
 done
@@ -57,6 +62,18 @@ skill_manifest="$skill_source/skill-manifest.txt"
 [ -d "$template_source/.agents" ] || die "missing project template"
 [ -f "$tracking_helper" ] || die "missing parent tracking helper"
 [ -f "$skill_manifest" ] || die "missing runtime manifest: $skill_manifest"
+
+validate_skill_manifest() {
+  duplicate_entry=""
+  if ! duplicate_entry=$(LC_ALL=C awk '
+    $0 == "" || substr($0, 1, 1) == "#" { next }
+    seen[$0]++ { print $0; exit 1 }
+  ' "$skill_manifest"); then
+    die "duplicate runtime manifest entry: $duplicate_entry"
+  fi
+}
+
+validate_skill_manifest
 
 if [ -n "$project_argument" ]; then
   [ -d "$project_argument" ] || die "project path is not a directory: $project_argument"

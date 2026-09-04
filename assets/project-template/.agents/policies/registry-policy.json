@@ -25,6 +25,8 @@
     },
     "architecture_impacts": [
       "none",
+      "possible",
+      "confirmed",
       "documentation-only",
       "architecture-change"
     ],
@@ -50,7 +52,85 @@
       "Data classification",
       "Provenance",
       "Executable"
-    ]
+    ],
+    "default_mode": "STANDARD",
+    "modes": {
+      "LIGHT": {
+        "required_metadata": [
+          "ID",
+          "Status",
+          "Created",
+          "Updated",
+          "Affected paths",
+          "Acceptance criteria",
+          "Validation",
+          "Architecture impact"
+        ]
+      },
+      "STANDARD": {
+        "required_metadata": [
+          "ID",
+          "Status",
+          "Created",
+          "Updated",
+          "Affected paths",
+          "Acceptance criteria",
+          "Validation",
+          "Architecture impact",
+          "Branch",
+          "Base ref",
+          "Source commit",
+          "Risks",
+          "Dependencies",
+          "Related architecture records",
+          "Review notes"
+        ]
+      },
+      "STRICT": {
+        "required_metadata": [
+          "ID",
+          "Status",
+          "Created",
+          "Updated",
+          "Affected paths",
+          "Acceptance criteria",
+          "Validation",
+          "Architecture impact",
+          "Branch",
+          "Base ref",
+          "Source commit",
+          "Risks",
+          "Dependencies",
+          "Related architecture records",
+          "Review notes",
+          "Owner",
+          "Reviewer",
+          "Delivery gate",
+          "Merge-base",
+          "Current head",
+          "Rollout",
+          "Rollback",
+          "Evidence",
+          "Data classification",
+          "Provenance"
+        ]
+      }
+    },
+    "metadata_defaults": {
+      "LIGHT": {
+        "Data classification": "internal",
+        "Provenance": "project-authored",
+        "Executable": "false"
+      },
+      "STANDARD": {
+        "Data classification": "internal",
+        "Provenance": "project-authored",
+        "Executable": "false"
+      },
+      "STRICT": {
+        "Executable": "false"
+      }
+    }
   },
   "records": {
     "branch_required_metadata": [
@@ -92,12 +172,14 @@
     ]
   },
   "architecture_gate": {
+    "enabled": true,
+    "base_ref": null,
     "branch_history_template": "architecture/branches/{branch_slug}.md",
     "no_registry_impacts": [
       "none",
       "documentation-only"
     ],
-    "sensitive_globs": [
+    "default_sensitive_globs": [
       "pom.xml",
       "*/pom.xml",
       "build.gradle",
@@ -134,10 +216,31 @@
       "*/providers/*",
       "provider/*",
       "*/provider/*",
+      "security/**",
+      "*/security/**",
+      "auth/**",
+      "*/auth/**",
       "*Security*",
       "*Auth*",
       "*Lock*"
-    ]
+    ],
+    "additional_sensitive_globs": [],
+    "ignored_globs": [],
+    "mode_escalation": {
+      "architecture_sensitive_minimum": "STANDARD",
+      "strict_sensitive_globs": [
+        "migrations/**",
+        "*/migrations/**",
+        "db/migration/**",
+        "*/db/migration/**",
+        "security/**",
+        "*/security/**",
+        "auth/**",
+        "*/auth/**",
+        "*Security*",
+        "*Auth*"
+      ]
+    }
   },
   "trust": {
     "allowed_classifications": [
@@ -178,6 +281,11 @@
         "regex": "\\b(?:ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,})\\b"
       }
     ]
+  },
+  "secret_scan": {
+    "enabled": true,
+    "builtin_patterns": true,
+    "additional_patterns": []
   },
   "context_budget": {
     "total_bytes": 2097152,

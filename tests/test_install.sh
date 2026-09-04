@@ -6,7 +6,6 @@ program="project-agent-workflow-tests"
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 package_root=$(CDPATH= cd -- "$script_dir/.." && pwd -P)
 installer="$package_root/install.sh"
-validator="$package_root/scripts/validate_registry.py"
 temporary_root=$(mktemp -d "${TMPDIR:-/tmp}/project-agent-workflow-test.XXXXXX")
 tests_run=0
 global_ignore="$temporary_root/global-ignore"
@@ -57,9 +56,12 @@ snapshot() (
 fresh="$temporary_root/fresh"
 init_repo "$fresh"
 (cd "$fresh" && "$installer") >"$temporary_root/fresh.out"
+validator="$fresh/.agents/skills/project-agent-workflow/scripts/validate_registry.py"
 [ -f "$fresh/.agents/skills/project-agent-workflow/SKILL.md" ] || fail "skill was not installed"
 [ -f "$fresh/.agents/tasks/templates/task.md" ] || fail "task template was not installed"
 [ -f "$fresh/.agents/skills/project-agent-workflow/LICENSE" ] || fail "skill license was not installed"
+cmp -s "$package_root/VERSION" "$fresh/.agents/skills/project-agent-workflow/VERSION" ||
+  fail "installed VERSION does not match the source package"
 [ -x "$fresh/.agents/skills/project-agent-workflow/install.sh" ] ||
   fail "installed one-command wrapper is missing or not executable"
 [ ! -e "$fresh/.agents/skills/project-agent-workflow/README.md" ] ||
@@ -89,6 +91,46 @@ sh "$spaced_source/install.sh" --project "$spaced_target" >"$temporary_root/spac
 [ -f "$spaced_target/.agents/skills/project-agent-workflow/SKILL.md" ] ||
   fail "installer failed when source and target paths contained spaces"
 pass "source and target paths with spaces"
+
+duplicate_manifest_target="$temporary_root/duplicate-manifest-target"
+init_repo "$duplicate_manifest_target"
+printf '%s\n' "SKILL.md" >>"$spaced_source/skill-manifest.txt"
+if sh "$spaced_source/install.sh" --project "$duplicate_manifest_target" \
+  >"$temporary_root/duplicate-manifest.out" 2>&1; then
+  fail "installer accepted a duplicate runtime manifest entry"
+fi
+grep -Fq "duplicate runtime manifest entry: SKILL.md" \
+  "$temporary_root/duplicate-manifest.out" ||
+  fail "installer did not report the duplicate runtime manifest entry"
+[ ! -e "$duplicate_manifest_target/.agents" ] ||
+  fail "duplicate manifest failure caused a partial install"
+[ ! -e "$duplicate_manifest_target/.gitignore" ] ||
+  fail "duplicate manifest failure changed parent .gitignore"
+pass "duplicate runtime manifest entry is rejected before mutation"
+
+traversal_manifest_target="$temporary_root/traversal-manifest-target"
+init_repo "$traversal_manifest_target"
+cp "$package_root/skill-manifest.txt" "$spaced_source/skill-manifest.txt"
+printf '%s\n' "../outside" >>"$spaced_source/skill-manifest.txt"
+if sh "$spaced_source/install.sh" --project "$traversal_manifest_target" \
+  >"$temporary_root/traversal-manifest.out" 2>&1; then
+  fail "installer accepted a traversal runtime manifest entry"
+fi
+grep -Fq "unsafe runtime manifest entry: ../outside" \
+  "$temporary_root/traversal-manifest.out" ||
+  fail "installer did not report the traversal runtime manifest entry"
+[ ! -e "$traversal_manifest_target/.agents" ] ||
+  fail "traversal manifest failure caused a partial install"
+[ ! -e "$traversal_manifest_target/.gitignore" ] ||
+  fail "traversal manifest failure changed parent .gitignore"
+pass "traversal runtime manifest entry is rejected before mutation"
+
+positional_target="$temporary_root/positional-target"
+init_repo "$positional_target"
+sh "$installer" "$positional_target" >"$temporary_root/positional.out"
+[ -f "$positional_target/.agents/skills/project-agent-workflow/SKILL.md" ] ||
+  fail "installer did not accept a positional project path"
+pass "positional project path"
 
 before=$(snapshot "$fresh")
 sh "$installer" --project "$fresh" >"$temporary_root/reinstall.out"
@@ -214,6 +256,21 @@ fi
 [ -z "$(find "$symlink_outside" -mindepth 1 -print -quit)" ] ||
   fail "installer wrote through a symlink"
 pass "symlink boundary refusal"
+
+nested_symlink_repo="$temporary_root/nested-symlink"
+nested_symlink_outside="$temporary_root/nested-symlink-outside"
+init_repo "$nested_symlink_repo"
+mkdir -p "$nested_symlink_repo/.agents" "$nested_symlink_outside"
+ln -s "$nested_symlink_outside" "$nested_symlink_repo/.agents/skills"
+if sh "$installer" --project "$nested_symlink_repo" \
+  >"$temporary_root/nested-symlink.out" 2>&1; then
+  fail "installer accepted a nested symlink in a managed path"
+fi
+[ -z "$(find "$nested_symlink_outside" -mindepth 1 -print -quit)" ] ||
+  fail "installer wrote through a nested symlink"
+[ ! -e "$nested_symlink_repo/.gitignore" ] ||
+  fail "nested symlink failure changed parent .gitignore"
+pass "nested symlink boundary refusal"
 
 non_git="$temporary_root/non-git"
 mkdir -p "$non_git"

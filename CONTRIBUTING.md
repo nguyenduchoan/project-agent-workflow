@@ -18,6 +18,7 @@ inside an existing Git repository.
    python3 tests/verify_package.py
    sh -n install.sh scripts/install.sh tests/test_install.sh
    python3 -m compileall -q scripts tests
+   python3 -m unittest discover -s tests -p 'test_*.py'
    ./tests/test_install.sh
    ```
 
@@ -36,10 +37,20 @@ the documented target boundary requires explicit design review.
 
 ## Releasing
 
-1. Update `VERSION` and `CHANGELOG.md` together.
-2. Run the full local gate and review the complete Git diff.
-3. Merge only after the pinned CI workflow passes on the minimum Python version.
-4. Create a signed `v<version>` tag from the reviewed commit and publish source
-   archives from that tag.
-5. For the first public release, verify the canonical repository URL and version
-   used by the one-command example in `README.md`.
+`VERSION` identifies source and installed package contents; it does not prove a Git
+tag or GitHub release exists. A release owner creates those objects only after the
+reviewed source passes this checklist:
+
+- [ ] package verification passes;
+- [ ] installer and validator tests pass;
+- [ ] the manifest-assembled artifact passes official Agent Skills validation;
+- [ ] `VERSION`, the changelog heading, intended `v<version>` tag, and installed
+      artifact version agree;
+- [ ] the changelog entry is no longer marked `Unreleased`;
+- [ ] Git status contains only reviewed release changes before tagging;
+- [ ] manual security review confirms installer boundaries, prompt-injection
+      guidance, and secret guards remain intact.
+
+After the checklist passes, merge through the normal review process, create a
+signed `v<version>` tag from that reviewed commit, and publish source archives from
+that tag. No repository script creates or pushes a tag or release automatically.

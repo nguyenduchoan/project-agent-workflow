@@ -4,4 +4,4 @@ interface:
   default_prompt: "Use $project-agent-workflow to bootstrap this repository with a project-local agent workflow."
 
 policy:
-  allow_implicit_invocation: true
+  allow_implicit_invocation: false

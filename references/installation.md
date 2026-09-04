@@ -19,6 +19,12 @@ To target another repository explicitly:
 bash /absolute/path/to/project-agent-workflow/install.sh --project /path/to/repository
 ```
 
+A positional project path is equivalent and is supported by both wrappers:
+
+```sh
+bash /absolute/path/to/project-agent-workflow/scripts/install.sh /path/to/repository
+```
+
 Inspect planned changes without writing:
 
 ```sh
@@ -45,6 +51,7 @@ bash /absolute/path/to/project-agent-workflow/install.sh --dry-run
   are appended/moved to the end; malformed or duplicated markers fail closed.
 - The installer never edits `AGENTS.md`, `.git/hooks`, user-level Codex
   directories, or global Git configuration, and never stages or commits files.
+- It never pushes, uses `sudo`, or requires runtime network access.
 - The installer does not copy project-specific task history, architecture state,
   legacy exceptions, credentials, or runtime evidence.
 

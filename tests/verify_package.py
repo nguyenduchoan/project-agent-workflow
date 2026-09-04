@@ -27,7 +27,17 @@ REQUIRED_RELEASE_FILES = (
     "agents/openai.yaml",
     "install.sh",
     "skill-manifest.txt",
+    "tests/assemble_skill.py",
     "tests/test_install.sh",
+    "tests/test_package.py",
+    "tests/test_validator_architecture_gate.py",
+    "tests/test_validator_git_metadata.py",
+    "tests/test_validator_markdown.py",
+    "tests/test_validator_modes.py",
+    "tests/test_validator_policy.py",
+    "tests/test_validator_secrets.py",
+    "tests/test_validator_staleness.py",
+    "tests/validator_test_support.py",
     "tests/verify_package.py",
 )
 PROJECT_SPECIFIC_TOKENS = (
@@ -78,6 +88,8 @@ def runtime_files(errors: list[str]) -> set[str]:
             errors.append(f"runtime directory is missing or is a symlink: {directory_name}")
             continue
         for path in directory.rglob("*"):
+            if "__pycache__" in path.parts or path.suffix.lower() in {".pyc", ".pyo"}:
+                continue
             if path.is_symlink():
                 errors.append(f"runtime path is a symlink: {relative(path)}")
             elif path.is_file():
@@ -113,12 +125,19 @@ def verify_skill_metadata(errors: list[str]) -> None:
         errors.append("SKILL.md must have a single-line description")
     elif len(description.group(1)) > 1024:
         errors.append("SKILL.md description exceeds 1024 characters")
+    compatibility = re.search(r"(?m)^compatibility:\s*(\S.*)$", frontmatter)
+    if compatibility is None:
+        errors.append("SKILL.md must declare runtime compatibility")
+    elif len(compatibility.group(1)) > 500:
+        errors.append("SKILL.md compatibility exceeds 500 characters")
 
     metadata_path = PACKAGE_ROOT / "agents" / "openai.yaml"
     if metadata_path.is_file():
         metadata = metadata_path.read_text(encoding="utf-8")
         if "$project-agent-workflow" not in metadata:
             errors.append("agents/openai.yaml default prompt must mention the skill")
+        if not re.search(r"(?m)^\s*allow_implicit_invocation:\s*false\s*$", metadata):
+            errors.append("agents/openai.yaml must disable implicit invocation")
 
     version_path = PACKAGE_ROOT / "VERSION"
     if version_path.is_file():
