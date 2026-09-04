@@ -15,6 +15,8 @@ Move long raw evidence to a project-approved artifact location. Keep its redacte
 summary, source, verified date, decision, and residual risk in the registry record.
 
 Branch records must declare `Verified at` and a positive `Stale after days`.
-Validation fails when `validation date - Verified at` exceeds that threshold; a
-record exactly at the threshold remains fresh. Refresh and revalidate evidence
+Validation fails when a current-branch or current-task-linked record exceeds its
+threshold; unrelated active-branch and historical records warn instead. A record
+exactly at the threshold remains fresh. Change records used as architecture-gate
+evidence must declare their own positive threshold. Refresh and revalidate evidence
 instead of extending a stale date without checking authoritative sources.

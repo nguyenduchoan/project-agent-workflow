@@ -318,7 +318,7 @@ mkdir -p "$fresh/config"
 printf '%s\n' "enabled: true" >"$fresh/config/application.yml"
 python3 "$validator" --project "$fresh" --base-ref "$head_commit" \
   >"$temporary_root/registry-gate.out"
-grep -Fq "covered by changed no-impact task records" "$temporary_root/registry-gate.out" ||
+grep -Fq "covered by current no-impact task records" "$temporary_root/registry-gate.out" ||
   fail "architecture gate test did not exercise the no-impact task path"
 pass "scoped no-impact task satisfies architecture gate"
 

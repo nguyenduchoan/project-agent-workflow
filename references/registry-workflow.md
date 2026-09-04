@@ -21,9 +21,11 @@ Read only the smallest current context:
 
 Source code, runtime configuration, tests, and current operational evidence remain
 authoritative. Refresh stale registry content instead of silently relying on it.
-Branch records whose `Verified at` age exceeds positive `Stale after days` fail
-validation. The validator's `--today YYYY-MM-DD` option exists for deterministic
-tests and does not use network time.
+Stale current-branch records and records explicitly linked from a current task fail
+validation. Stale records for other active branches or historical work produce a
+warning instead. Invalid dates and non-positive thresholds remain errors at every
+relevance level. The validator's `--today YYYY-MM-DD` option exists for
+deterministic tests and does not use network time.
 
 ## Choose a mode
 
@@ -78,6 +80,13 @@ For a confirmed or legacy architecture change, update the branch record and crea
 or update a linked change record. For `none`, record a concrete reason and scoped
 affected paths in the active task.
 
+Use comma-separated IDs or managed paths in `Related architecture records`; use
+`none` when there is no record. Targets are limited to Markdown records below
+`architecture/branches` and `architecture/changes`. A confirmed task must link a
+dedicated change record, and that record's `Related task` must resolve back to the
+same task. `STRICT` work touching an architecture-sensitive path also requires a
+dedicated change record even when its declared impact is `none` or `possible`.
+
 ## Architecture comparison
 
 Normal validation resolves a local-only base in this order: explicit `--base-ref`,
@@ -85,6 +94,25 @@ policy `architecture_gate.base_ref`, upstream tracking branch merge-base,
 `origin/main`, `origin/master`, `main`, then `master`. It never fetches. If no base
 can be resolved, structural checks continue and the output clearly warns that the
 diff gate was skipped.
+
+For a sensitive diff, the validator selects all valid active tasks whose `Branch`
+matches the current checkout. The task files do not need to be added or modified in
+that diff. Their normalized repository-relative `Affected paths` may cover the
+sensitive paths collectively. A wrong-branch task, an uncovered path, or the
+absence of a current-branch task cannot be replaced by a branch record alone.
+
+Policy-approved no-impact values may satisfy the gate at `STANDARD`. A `possible`
+impact may use a linked current-branch record that is added or modified in the
+diff. A `confirmed` impact requires linked `architecture/changes` evidence. That
+change record must be structurally valid, point back to the task, match the current
+branch, cover the sensitive paths, and have a valid `Verified at` plus positive
+`Stale after days` that is still fresh. The same dedicated evidence rule applies to
+`STRICT` sensitive work.
+
+To migrate confirmed or `STRICT` work that formerly relied on a branch record,
+create or update a dedicated change record, link it from `Related architecture
+records`, link it back through `Related task`, and populate fresh verification,
+threshold, and affected-path metadata. Migration is manual and non-destructive.
 
 `--no-architecture-gate` is an explicit opt-out for diff checks only. It does not
 disable task/record structure, stale dates, Git metadata, trust metadata, secret
@@ -99,14 +127,24 @@ rejected. Values are data and are never evaluated as shell expressions.
 
 When a Git repository is available, commit fields must resolve to commit objects,
 base refs must resolve, and merge-base values must match Git's computed result.
-Active task branch/current-head values and current-branch architecture records are
-checked against the checkout. Historical task records may retain older branch/head
-metadata. Detached HEAD produces deterministic warnings where a branch comparison
-has no meaningful answer.
+Only active tasks whose `Branch` matches the checkout receive checkout-relative
+`Current head` checks. Other active tasks remain structurally validated, and their
+commit IDs, base refs, dates, links, and merge-base relationships are still checked,
+but they do not fail merely because another branch is checked out. Historical task
+records may retain older branch/head metadata. Detached HEAD produces deterministic
+warnings and skips checkout-relative task and architecture-gate selection while
+commit-object validation continues.
 
 `Related task` accepts a task ID or a path below `tasks/active` or
 `tasks/history`. Absolute paths, URLs, traversal, missing files, symlinks, and
 ambiguous IDs are rejected.
+
+`Related architecture records` accepts a comma-separated list of record IDs or
+paths below `architecture/branches` and `architecture/changes`. Resolution is
+repository-bounded and rejects absolute paths, URLs, traversal, unsupported
+extensions/directories, the changes index, symlinks, missing records, and ambiguous
+short IDs. Modern task records require bidirectional task/change relationships;
+legacy STANDARD-like mismatches are warnings unless the impact is `confirmed`.
 
 ## Secret guardrail
 

@@ -46,6 +46,13 @@ references and globs, stale dates, and high-confidence secret patterns. Addition
 project regex patterns are bounded in count and size, compiled as data, and never
 evaluated by a shell. Built-in patterns cannot be removed, redefined, or disabled
 through policy.
+
+Task-to-architecture references are decoded and parsed as untrusted data. They are
+limited to managed Markdown records below `.agents/architecture/branches` and
+`.agents/architecture/changes`; absolute paths, URLs, traversal, unsupported
+targets, ambiguous IDs, and every symlink component are rejected before record
+content is used as evidence. No registry field is concatenated into or executed as
+a shell command.
 Nevertheless, this validator is a guardrail rather than a complete DLP or secret
 scanner; use gitleaks, trufflehog, or an approved enterprise scanner where the
 project requires broader coverage.

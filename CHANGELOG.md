@@ -18,6 +18,13 @@ All notable changes are recorded here. Versions follow Semantic Versioning.
 - Strengthened installer manifest preflight with duplicate and traversal
   regression tests.
 - Removed the undocumented `.mb` scanning suffix and added regression coverage.
+- Scoped stale-record errors and checkout-relative Git checks to current work while
+  preserving structural validation across active branches and history.
+- Hardened architecture evidence discovery, affected-path matching, safe
+  task-to-record links, confirmed/STRICT change-record requirements, and freshness
+  checks without requiring task files to change in every sensitive diff.
+- Added Ubuntu/macOS coverage for the portable core CI test job and aligned Python
+  command and primary-branch documentation with actual behavior.
 
 ## 1.0.0 - 2026-09-04
 

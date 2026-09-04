@@ -108,6 +108,25 @@ def legacy_task(repo: ValidatorRepo) -> str:
 """
 
 
+def branch_record(repo: ValidatorRepo) -> str:
+    return f"""# Branch architecture
+
+- Branch: main
+- Slug: main
+- Created: 2026-09-04
+- Updated: 2026-09-04
+- Base ref: {repo.head}
+- Merge-base: {repo.head}
+- Current head: {repo.head}
+- Source commit: {repo.head}
+- Verified at: 2026-09-04
+- Stale after days: 30
+- Data classification: internal
+- Provenance: project-authored
+- Executable: false
+"""
+
+
 class WorkflowModeTests(unittest.TestCase):
     def test_policy_cannot_remove_a_mode_baseline_field(self) -> None:
         with ValidatorRepo("main") as repo:
@@ -231,6 +250,38 @@ class WorkflowModeTests(unittest.TestCase):
             self.assertIn("ERROR [task-mode-escalation]", result.stdout)
             self.assertIn("promoted to STANDARD", result.stdout)
 
+    def test_other_branch_light_task_is_not_promoted_for_current_diff(self) -> None:
+        with ValidatorRepo("main") as repo:
+            repo.write(
+                ".agents/tasks/active/20260904-light.md",
+                light_task(affected="config/**") + "- Branch: feature/login\n",
+            )
+            repo.write(
+                ".agents/tasks/active/20260904-standard.md",
+                standard_task(repo, affected="config/**"),
+            )
+            repo.write("config/application.yml", "enabled: true\n")
+            result = repo.run_validator("--today", "2026-09-04")
+            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+            self.assertNotIn("tasks/active/20260904-light.md", result.stdout)
+
+    def test_legacy_possible_task_can_use_changed_branch_record(self) -> None:
+        with ValidatorRepo("main") as repo:
+            task = (
+                legacy_task(repo)
+                .replace("Affected paths: docs/**", "Affected paths: config/**")
+                .replace(
+                    "Architecture impact: documentation-only",
+                    "Architecture impact: possible",
+                )
+            )
+            repo.write(".agents/tasks/active/20260904-legacy.md", task)
+            repo.write(".agents/architecture/branches/main.md", branch_record(repo))
+            repo.write("config/application.yml", "enabled: true\n")
+            result = repo.run_validator("--today", "2026-09-04")
+            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+            self.assertIn("validated branch architecture evidence", result.stdout)
+
     def test_security_sensitive_change_requires_strict(self) -> None:
         with ValidatorRepo("main") as repo:
             repo.write(
@@ -251,9 +302,9 @@ class WorkflowModeTests(unittest.TestCase):
             repo.write("config/application.yml", "enabled: true\n")
             result = repo.run_validator("--today", "2026-09-04")
             self.assertEqual(0, result.returncode, result.stdout + result.stderr)
-            self.assertIn("covered by changed no-impact task records", result.stdout)
+            self.assertIn("covered by current no-impact task records", result.stdout)
 
-    def test_strict_task_can_cover_security_sensitive_change(self) -> None:
+    def test_strict_task_requires_change_record_for_security_sensitive_change(self) -> None:
         with ValidatorRepo("main") as repo:
             repo.write(
                 ".agents/tasks/active/20260904-strict.md",
@@ -261,8 +312,9 @@ class WorkflowModeTests(unittest.TestCase):
             )
             repo.write("security/policy.py", "ENABLED = True\n")
             result = repo.run_validator("--today", "2026-09-04")
-            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
-            self.assertIn("covered by changed no-impact task records", result.stdout)
+            self.assertEqual(1, result.returncode, result.stdout + result.stderr)
+            self.assertIn("ERROR [architecture-change-evidence]", result.stdout)
+            self.assertIn("STRICT sensitive work", result.stdout)
 
 
 if __name__ == "__main__":

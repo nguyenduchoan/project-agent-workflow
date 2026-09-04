@@ -23,6 +23,10 @@ can require promotion. Move completed tasks to `tasks/history/completed` and
 cancelled tasks to `tasks/history/cancelled`. Keep lifecycle state separate from
 delivery gate.
 
+Multiple active tasks may coexist. Checkout-relative Git checks and architecture
+evidence selection apply only to tasks whose `Branch` matches the checkout; other
+active tasks are still structurally, referentially, and commit validated.
+
 ## Validation
 
 ```sh
@@ -40,6 +44,16 @@ python3 .agents/skills/project-agent-workflow/scripts/validate_registry.py \
 Use `--no-architecture-gate` only as an explicit diff-gate opt-out. Other
 structural, Git metadata, stale-date, trust, link, secret, symlink, and context
 checks still run. A warning is printed if no safe base can be resolved.
+
+Sensitive-path evidence comes from valid current-branch tasks even when their task
+files are unchanged in the diff. `Affected paths` must be repository-relative.
+Use comma-separated IDs or managed paths in `Related architecture records`.
+Confirmed and `STRICT` sensitive work requires a fresh, bidirectionally linked
+record below `architecture/changes`; a branch record alone is not sufficient.
+
+Stale current-branch or current-task-linked architecture records are errors. Stale
+unrelated active-branch and historical records are warnings. Malformed dates,
+thresholds, or references remain errors regardless of relevance.
 
 ## Trust boundary
 

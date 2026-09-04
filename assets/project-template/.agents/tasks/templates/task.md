@@ -16,7 +16,10 @@
 - Source commit:
 - Risks: see section below
 - Dependencies:
-- Related architecture records:
+- Related architecture records: none
+<!-- Use comma-separated record IDs or managed paths under architecture/branches
+or architecture/changes. Confirmed and STRICT sensitive work needs a linked
+architecture/changes record whose Related task points back to this task. -->
 - Review notes:
 
 <!-- STRICT metadata. Remove or leave blank for LIGHT/STANDARD unless policy requires it. -->

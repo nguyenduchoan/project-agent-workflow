@@ -13,6 +13,7 @@ import subprocess
 import sys
 from dataclasses import asdict, dataclass
 from datetime import date
+from enum import Enum
 from pathlib import Path, PurePosixPath
 from typing import Iterable, Sequence
 from urllib.parse import unquote, urlparse
@@ -142,6 +143,44 @@ class Finding:
     code: str
     path: str
     message: str
+
+
+class TaskRelevance(Enum):
+    CURRENT = "current-branch"
+    OTHER_ACTIVE = "other-active-branch"
+    DETACHED = "detached-head"
+    HISTORICAL = "historical"
+
+
+class RecordRelevance(Enum):
+    CURRENT = "current-branch"
+    LINKED = "linked"
+    ACTIVE_OTHER = "other active branch"
+    HISTORICAL = "historical"
+
+
+@dataclass
+class TaskRecord:
+    path: Path
+    rel_path: str
+    metadata: dict[str, str]
+    relevance: TaskRelevance
+    architecture_links: tuple[Path, ...]
+    affected_paths: tuple[str, ...]
+
+
+@dataclass
+class ArchitectureRecord:
+    path: Path
+    rel_path: str
+    kind: str
+    metadata: dict[str, str]
+    relevance: RecordRelevance
+    verified_at: date | None
+    stale_after_days: int | None
+    stale_age_days: int | None
+    related_task_path: Path | None
+    affected_paths: tuple[str, ...]
 
 
 def run_git(
@@ -304,6 +343,23 @@ def normalize_glob_list(raw: object, field_name: str) -> list[str]:
     if not isinstance(raw, list):
         raise ConfigurationError(f"{field_name} must be an array")
     return [normalize_repo_relative_glob(item, field_name) for item in raw]
+
+
+def validate_affected_paths(
+    raw: str,
+    rel_path: str,
+    findings: list[Finding],
+) -> tuple[str, ...]:
+    normalized: list[str] = []
+    for item in raw.split(","):
+        value = item.strip().strip("`").strip()
+        if not value:
+            continue
+        try:
+            normalized.append(normalize_repo_relative_glob(value, "Affected paths"))
+        except ConfigurationError as exc:
+            findings.append(Finding("record-affected-path", rel_path, str(exc)))
+    return tuple(normalized)
 
 
 def configure_task_modes(policy: dict) -> None:
@@ -695,9 +751,11 @@ def scan_tasks(
     policy: dict,
     validation_date: date,
     warnings: list[str],
-) -> list[Finding]:
+) -> tuple[list[Finding], list[TaskRecord]]:
     findings: list[Finding] = []
+    records: list[TaskRecord] = []
     task_policy = policy["tasks"]
+    checkout_branch = current_git_branch(project_root) if project_root is not None else None
     paths = [
         path
         for path in (agents_root / "tasks" / "active").glob("*.md")
@@ -710,10 +768,25 @@ def scan_tasks(
     )
     for path in sorted(paths):
         rel_path = relative(agents_root, path)
+        is_active = fnmatch.fnmatchcase(rel_path, "tasks/active/*.md")
         text = read_registry_text(path, agents_root, findings)
         if text is None:
             continue
         metadata = parse_metadata(text)
+        affected_paths = validate_affected_paths(
+            metadata.get("Affected paths", ""), rel_path, findings
+        )
+        task_branch = clean(metadata.get("Branch", ""))
+        if not is_active:
+            relevance = TaskRelevance.HISTORICAL
+        elif checkout_branch is None:
+            relevance = TaskRelevance.OTHER_ACTIVE
+        elif not checkout_branch:
+            relevance = TaskRelevance.DETACHED
+        elif task_branch == checkout_branch:
+            relevance = TaskRelevance.CURRENT
+        else:
+            relevance = TaskRelevance.OTHER_ACTIVE
         raw_mode = metadata.get("Mode")
         mode: str | None = None
         if raw_mode is not None:
@@ -821,12 +894,26 @@ def scan_tasks(
             )
         if metadata.get("Related task"):
             validate_related_task(agents_root, metadata["Related task"], rel_path, findings)
-        is_active = fnmatch.fnmatchcase(rel_path, "tasks/active/*.md")
-        if is_active and metadata.get("Branch"):
-            validate_current_branch(
-                project_root, metadata["Branch"], rel_path, findings, warnings
+        architecture_links = validate_related_architecture_records(
+            agents_root,
+            metadata.get("Related architecture records", ""),
+            rel_path,
+            findings,
+        )
+        if (
+            is_active
+            and relevance is TaskRelevance.DETACHED
+            and metadata.get("Branch")
+        ):
+            warnings.append(
+                f"{rel_path}: checkout-relative Branch and Current head checks "
+                "skipped because HEAD is detached"
             )
-        if is_active and project_root is not None and resolved_current_head:
+        if (
+            relevance is TaskRelevance.CURRENT
+            and project_root is not None
+            and resolved_current_head
+        ):
             checkout_head = current_git_head(project_root)
             if resolved_current_head != checkout_head:
                 findings.append(
@@ -850,7 +937,17 @@ def scan_tasks(
                     )
             except ValueError:
                 pass
-    return findings
+        records.append(
+            TaskRecord(
+                path=path,
+                rel_path=rel_path,
+                metadata=metadata,
+                relevance=relevance,
+                architecture_links=architecture_links,
+                affected_paths=affected_paths,
+            )
+        )
+    return findings, records
 
 
 def validate_iso_date(
@@ -948,29 +1045,6 @@ def current_git_head(project_root: Path) -> str:
     return output.strip()
 
 
-def validate_current_branch(
-    project_root: Path | None,
-    raw_branch: str,
-    rel_path: str,
-    findings: list[Finding],
-    warnings: list[str],
-) -> None:
-    if project_root is None:
-        return
-    branch = clean(raw_branch)
-    current = current_git_branch(project_root)
-    if not current:
-        warnings.append(f"{rel_path}: Branch comparison skipped because HEAD is detached")
-    elif branch != current:
-        findings.append(
-            Finding(
-                "record-branch",
-                rel_path,
-                f"Branch '{branch}' does not match current branch '{current}'",
-            )
-        )
-
-
 def related_task_candidates(agents_root: Path, raw: str) -> tuple[list[Path], str | None]:
     value = unquote(clean(raw)).replace("\\", "/")
     value = value.split("#", 1)[0].split("?", 1)[0]
@@ -1010,16 +1084,112 @@ def validate_related_task(
     rel_path: str,
     findings: list[Finding],
 ) -> None:
-    candidates, error = related_task_candidates(agents_root, raw)
+    _path, error = resolve_related_task_reference(agents_root, raw)
     if error:
         findings.append(Finding("record-related-task", rel_path, error))
-        return
-    existing = [path for path in candidates if path.is_file() and not path.is_symlink()]
+
+
+def resolve_related_task_reference(
+    agents_root: Path, raw: str
+) -> tuple[Path | None, str | None]:
+    candidates, error = related_task_candidates(agents_root, raw)
+    if error:
+        return None, error
+    if any(has_symlink_component(agents_root, path) for path in candidates):
+        return None, f"Related task must not use a symlink: {clean(raw)}"
+    existing = [path for path in candidates if path.is_file()]
     if len(existing) != 1:
         detail = "does not exist" if not existing else "is ambiguous"
-        findings.append(
-            Finding("record-related-task", rel_path, f"Related task {detail}: {clean(raw)}")
+        return None, f"Related task {detail}: {clean(raw)}"
+    return existing[0], None
+
+
+def architecture_reference_values(raw: str) -> tuple[str, ...]:
+    values: list[str] = []
+    for item in raw.strip().split(","):
+        value = item.strip().strip("`").strip()
+        if value:
+            values.append(value)
+    if not values or (
+        len(values) == 1
+        and values[0].lower() in {"none", "n/a", "not-applicable"}
+    ):
+        return ()
+    return tuple(values)
+
+
+def architecture_record_candidates(
+    agents_root: Path, raw: str
+) -> tuple[list[Path], str | None]:
+    value = unquote(clean(raw)).replace("\\", "/")
+    value = value.split("#", 1)[0].split("?", 1)[0]
+    if not value:
+        return [], "architecture record reference must not be empty"
+    if "\0" in value:
+        return [], "architecture record reference must not contain a NUL byte"
+    parsed = urlparse(value)
+    if parsed.scheme or value.startswith("//") or value.startswith("/"):
+        return [], f"architecture record must be a repository registry reference: {raw}"
+    if value.startswith(".agents/"):
+        value = value[len(".agents/") :]
+    reference = PurePosixPath(value)
+    if ".." in reference.parts or "." in reference.parts:
+        return [], f"architecture record reference contains traversal: {raw}"
+    if len(reference.parts) == 1:
+        stem = reference.stem if reference.suffix == ".md" else value
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", stem):
+            return [], f"architecture record ID is invalid: {raw}"
+        return [
+            agents_root / "architecture" / "branches" / f"{stem}.md",
+            agents_root / "architecture" / "changes" / f"{stem}.md",
+        ], None
+    allowed = (
+        len(reference.parts) == 3
+        and reference.parts[:2] in {
+            ("architecture", "branches"),
+            ("architecture", "changes"),
+        }
+    )
+    if not allowed or reference.suffix != ".md":
+        return [], (
+            "architecture record must point inside architecture/branches or "
+            f"architecture/changes and use .md: {raw}"
         )
+    return [agents_root / reference], None
+
+
+def resolve_architecture_record_reference(
+    agents_root: Path, raw: str
+) -> tuple[Path | None, str | None]:
+    candidates, error = architecture_record_candidates(agents_root, raw)
+    if error:
+        return None, error
+    change_index = agents_root / "architecture" / "changes" / "index.md"
+    if change_index in candidates:
+        return None, "architecture/changes/index is not an architecture record"
+    if any(has_symlink_component(agents_root, path) for path in candidates):
+        return None, f"architecture record reference must not use a symlink: {clean(raw)}"
+    existing = [path for path in candidates if path.is_file()]
+    if len(existing) != 1:
+        detail = "does not exist" if not existing else "is ambiguous"
+        return None, f"architecture record reference {detail}: {clean(raw)}"
+    return existing[0], None
+
+
+def validate_related_architecture_records(
+    agents_root: Path,
+    raw: str,
+    rel_path: str,
+    findings: list[Finding],
+) -> tuple[Path, ...]:
+    resolved: list[Path] = []
+    for reference in architecture_reference_values(raw):
+        path, error = resolve_architecture_record_reference(agents_root, reference)
+        if error:
+            findings.append(Finding("record-related-architecture", rel_path, error))
+        elif path is not None:
+            resolved.append(path)
+    return tuple(resolved)
 
 
 def validate_merge_base(
@@ -1065,15 +1235,60 @@ def validate_merge_base(
         )
 
 
+def classify_architecture_record_relevance(
+    path: Path,
+    kind: str,
+    metadata: dict[str, str],
+    checkout_branch: str | None,
+    current_links: set[Path],
+    other_links: set[Path],
+    other_active_branches: set[str],
+) -> RecordRelevance:
+    if path in current_links:
+        return RecordRelevance.LINKED
+    if (
+        kind == "branch"
+        and checkout_branch
+        and clean(metadata.get("Branch", "")) == checkout_branch
+    ):
+        return RecordRelevance.CURRENT
+    if path in other_links or (
+        kind == "branch"
+        and clean(metadata.get("Branch", "")) in other_active_branches
+    ):
+        return RecordRelevance.ACTIVE_OTHER
+    return RecordRelevance.HISTORICAL
+
+
 def scan_records(
     agents_root: Path,
     project_root: Path | None,
     policy: dict,
     validation_date: date,
     warnings: list[str],
-) -> list[Finding]:
+    task_records: Sequence[TaskRecord],
+) -> tuple[list[Finding], list[ArchitectureRecord]]:
     findings: list[Finding] = []
+    records: list[ArchitectureRecord] = []
     record_policy = policy["records"]
+    checkout_branch = current_git_branch(project_root) if project_root is not None else None
+    current_links = {
+        linked
+        for task in task_records
+        if task.relevance is TaskRelevance.CURRENT
+        for linked in task.architecture_links
+    }
+    other_links = {
+        linked
+        for task in task_records
+        if task.relevance in {TaskRelevance.OTHER_ACTIVE, TaskRelevance.DETACHED}
+        for linked in task.architecture_links
+    }
+    other_active_branches = {
+        clean(task.metadata.get("Branch", ""))
+        for task in task_records
+        if task.relevance is TaskRelevance.OTHER_ACTIVE
+    }
     rules = (
         (
             sorted(
@@ -1102,6 +1317,19 @@ def scan_records(
             if text is None:
                 continue
             metadata = parse_metadata(text)
+            affected_paths = validate_affected_paths(
+                metadata.get("Affected paths", ""), rel_path, findings
+            )
+            relevance = classify_architecture_record_relevance(
+                path,
+                kind,
+                metadata,
+                checkout_branch,
+                current_links,
+                other_links,
+                other_active_branches,
+            )
+            related_task_path: Path | None = None
             for label in required:
                 if not metadata_value(metadata, label):
                     findings.append(
@@ -1111,9 +1339,13 @@ def scan_records(
             if source_commit:
                 validate_source_commit(project_root, source_commit, rel_path, findings)
             if metadata.get("Related task"):
-                validate_related_task(
-                    agents_root, metadata["Related task"], rel_path, findings
+                related_task_path, related_task_error = resolve_related_task_reference(
+                    agents_root, metadata["Related task"]
                 )
+                if related_task_error:
+                    findings.append(
+                        Finding("record-related-task", rel_path, related_task_error)
+                    )
             if metadata.get("Base ref / merge-base"):
                 validate_base_ref(
                     project_root,
@@ -1132,6 +1364,7 @@ def scan_records(
                         parsed_dates[label] = parsed
 
             stale_after_days: int | None = None
+            stale_age_days: int | None = None
             stale_after = clean(metadata.get("Stale after days", ""))
             if stale_after:
                 try:
@@ -1148,16 +1381,21 @@ def scan_records(
                     )
                     stale_after_days = None
             if stale_after_days is not None and "Verified at" in parsed_dates:
-                age = compute_record_age(parsed_dates["Verified at"], validation_date)
-                if age > stale_after_days:
-                    findings.append(
-                        Finding(
-                            "record-stale",
-                            rel_path,
-                            "Verified at: record is stale "
-                            f"({age} days > {stale_after_days} days)",
-                        )
+                stale_age_days = compute_record_age(
+                    parsed_dates["Verified at"], validation_date
+                )
+                if stale_age_days > stale_after_days:
+                    message = (
+                        f"{relevance.value} architecture record is stale "
+                        f"({stale_age_days} days > {stale_after_days} days)"
                     )
+                    if relevance in {
+                        RecordRelevance.CURRENT,
+                        RecordRelevance.LINKED,
+                    }:
+                        findings.append(Finding("record-stale", rel_path, message))
+                    else:
+                        warnings.append(f"[record-stale] {rel_path}: {message}")
             if kind == "change":
                 if metadata.get("Head snapshot"):
                     validate_commit_id(
@@ -1252,7 +1490,6 @@ def scan_records(
                         findings,
                     )
                 if project_root is not None and branch:
-                    checkout_branch = current_git_branch(project_root)
                     if not checkout_branch:
                         warnings.append(
                             f"{rel_path}: Current head comparison skipped because HEAD is detached"
@@ -1267,6 +1504,91 @@ def scan_records(
                                     f"Current head is {resolved_head}, expected {checkout_head}",
                                 )
                             )
+            records.append(
+                ArchitectureRecord(
+                    path=path,
+                    rel_path=rel_path,
+                    kind=kind,
+                    metadata=metadata,
+                    relevance=relevance,
+                    verified_at=parsed_dates.get("Verified at"),
+                    stale_after_days=stale_after_days,
+                    stale_age_days=stale_age_days,
+                    related_task_path=related_task_path,
+                    affected_paths=affected_paths,
+                )
+            )
+    return findings, records
+
+
+def validate_architecture_relationships(
+    task_records: Sequence[TaskRecord],
+    architecture_records: Sequence[ArchitectureRecord],
+    warnings: list[str],
+) -> list[Finding]:
+    findings: list[Finding] = []
+    records_by_path = {record.path: record for record in architecture_records}
+
+    def requires_bidirectional_error(task: TaskRecord) -> bool:
+        raw_mode = task.metadata.get("Mode")
+        mode = clean(raw_mode).upper() if raw_mode else None
+        impact = enum_value(metadata_value(task.metadata, "Architecture impact") or "")
+        return impact == "confirmed" or mode == "STRICT" or raw_mode is not None
+
+    for task in task_records:
+        linked_changes = [
+            records_by_path[path]
+            for path in task.architecture_links
+            if path in records_by_path and records_by_path[path].kind == "change"
+        ]
+        impact = enum_value(metadata_value(task.metadata, "Architecture impact") or "")
+        if impact == "confirmed" and not linked_changes:
+            findings.append(
+                Finding(
+                    "architecture-change-evidence",
+                    task.rel_path,
+                    "confirmed Architecture impact requires a dedicated architecture "
+                    "change record in Related architecture records",
+                )
+            )
+        for record in linked_changes:
+            if record.related_task_path == task.path:
+                continue
+            task_id = clean(metadata_value(task.metadata, "ID") or task.path.stem)
+            message = (
+                f"{record.rel_path} does not link back to task {task_id} through "
+                "Related task"
+            )
+            if requires_bidirectional_error(task):
+                findings.append(
+                    Finding("architecture-link-mismatch", task.rel_path, message)
+                )
+            else:
+                warnings.append(
+                    f"[architecture-link-mismatch] {task.rel_path}: legacy task link "
+                    f"is not bidirectional: {message}"
+                )
+    tasks_by_path = {task.path: task for task in task_records}
+    for record in architecture_records:
+        if record.kind != "change" or record.related_task_path not in tasks_by_path:
+            continue
+        task = tasks_by_path[record.related_task_path]
+        if record.path in task.architecture_links:
+            continue
+        task_id = clean(metadata_value(task.metadata, "ID") or task.path.stem)
+        message = (
+            f"Related task points to {task_id}, but {task.rel_path} does not link to "
+            f"{record.rel_path} through Related architecture records"
+        )
+        if requires_bidirectional_error(task):
+            findings.append(
+                Finding("architecture-link-mismatch", record.rel_path, message)
+            )
+        else:
+            warnings.append(
+                f"[architecture-link-mismatch] {record.rel_path}: legacy task link "
+                f"is not bidirectional: {message}"
+            )
     return findings
 
 
@@ -1459,8 +1781,8 @@ def changed_entries(project_root: Path, base_ref: str) -> dict[str, set[str]]:
     return result
 
 
-def covered_by_task(path: str, affected_paths: str) -> bool:
-    for raw in affected_paths.split(","):
+def covered_by_patterns(path: str, affected_paths: Iterable[str]) -> bool:
+    for raw in affected_paths:
         pattern = clean(raw)
         if not pattern or pattern in {"*", "**", "**/*", ".", "/"}:
             continue
@@ -1492,6 +1814,8 @@ def scan_architecture_gate(
     base_ref: str,
     policy: dict,
     existing_findings: list[Finding],
+    task_records: Sequence[TaskRecord],
+    architecture_records: Sequence[ArchitectureRecord],
 ) -> tuple[list[Finding], list[str]]:
     changes = changed_entries(project_root, base_ref)
     gate = policy["architecture_gate"]
@@ -1514,31 +1838,69 @@ def scan_architecture_gate(
     )
     branch_repo_path = f".agents/{branch_rel}"
     branch_path = agents_root / branch_rel
-    branch_errors = [finding for finding in existing_findings if finding.path == branch_rel]
-    task_candidates: list[tuple[str, dict[str, str]]] = []
-    mode_findings: list[Finding] = []
-    for repo_path, statuses in sorted(changes.items()):
-        if not fnmatch.fnmatchcase(repo_path, ".agents/tasks/active/*.md"):
+    invalid_paths = {finding.path for finding in existing_findings}
+    records_by_path = {record.path: record for record in architecture_records}
+    branch_record = records_by_path.get(branch_path)
+    branch_evidence = bool(
+        branch_record is not None
+        and branch_record.kind == "branch"
+        and branch_record.rel_path not in invalid_paths
+        and changes.get(branch_repo_path, set()).intersection({"A", "M"})
+    )
+
+    gate_findings: list[Finding] = []
+    notes: list[str] = []
+    freshness_reported: set[str] = set()
+    current_tasks = [
+        task
+        for task in task_records
+        if task.relevance is TaskRelevance.CURRENT
+        and task.rel_path not in invalid_paths
+    ]
+
+    # LIGHT records do not carry Branch metadata, but sensitive paths must still
+    # produce the actionable promotion finding instead of looking like no task exists.
+    for task in task_records:
+        if task.relevance is TaskRelevance.HISTORICAL or task.rel_path in invalid_paths:
             continue
-        if not statuses.intersection({"A", "M"}):
-            continue
-        rel_path = repo_path[len(".agents/") :]
-        task_path = agents_root / rel_path
         if (
-            has_symlink_component(agents_root, task_path)
-            or not task_path.is_file()
-            or any(item.path == rel_path for item in existing_findings)
+            task.relevance is TaskRelevance.OTHER_ACTIVE
+            and clean(task.metadata.get("Branch", ""))
         ):
             continue
-        metadata = parse_metadata(task_path.read_text(encoding="utf-8"))
-        affected = clean(metadata.get("Affected paths", ""))
+        mode = effective_task_mode(task.metadata, policy)
+        if mode != "LIGHT":
+            continue
         covered_sensitive = [
-            path for path in sensitive if covered_by_task(path, affected)
+            path for path in sensitive if covered_by_patterns(path, task.affected_paths)
         ]
         if not covered_sensitive:
-            task_candidates.append((rel_path, metadata))
             continue
-        mode = effective_task_mode(metadata, policy)
+        required_mode = max(
+            (required_mode_for_path(path, gate) for path in covered_sensitive),
+            key=MODE_ORDER.__getitem__,
+        )
+        if MODE_ORDER[mode] < MODE_ORDER[required_mode]:
+            gate_findings.append(
+                Finding(
+                    "task-mode-escalation",
+                    task.rel_path,
+                    f"Mode {mode} must be promoted to {required_mode} for sensitive paths: "
+                    + ", ".join(covered_sensitive),
+                )
+            )
+
+    uncovered = set(sensitive)
+    used_no_impact = False
+    used_branch_evidence = False
+    used_change_evidence = False
+    for task in current_tasks:
+        covered_sensitive = sorted(
+            path for path in sensitive if covered_by_patterns(path, task.affected_paths)
+        )
+        if not covered_sensitive:
+            continue
+        mode = effective_task_mode(task.metadata, policy)
         if mode is None:
             continue
         required_mode = max(
@@ -1546,46 +1908,119 @@ def scan_architecture_gate(
             key=MODE_ORDER.__getitem__,
         )
         if MODE_ORDER[mode] < MODE_ORDER[required_mode]:
-            mode_findings.append(
+            gate_findings.append(
                 Finding(
                     "task-mode-escalation",
-                    rel_path,
+                    task.rel_path,
                     f"Mode {mode} must be promoted to {required_mode} for sensitive paths: "
                     + ", ".join(covered_sensitive),
                 )
             )
             continue
-        task_candidates.append((rel_path, metadata))
 
-    if (
-        changes.get(branch_repo_path, set()).intersection({"A", "M"})
-        and branch_path.is_file()
-        and not branch_errors
-    ):
-        return mode_findings, [f"validated branch architecture delta: {branch_repo_path}"]
-
-    uncovered = set(sensitive)
-    for _rel_path, metadata in task_candidates:
-        task_branch = clean(metadata.get("Branch", ""))
-        impact = enum_value(metadata_value(metadata, "Architecture impact") or "")
-        affected = clean(metadata.get("Affected paths", ""))
-        if task_branch != branch or impact not in gate["no_registry_impacts"]:
-            continue
-        uncovered = {path for path in uncovered if not covered_by_task(path, affected)}
-
-    if not uncovered:
-        return mode_findings, [
-            "architecture-sensitive paths are covered by changed no-impact task records"
+        impact = enum_value(metadata_value(task.metadata, "Architecture impact") or "")
+        linked_changes = [
+            records_by_path[path]
+            for path in task.architecture_links
+            if path in records_by_path and records_by_path[path].kind == "change"
         ]
-    return [
-        *mode_findings,
-        Finding(
-            "architecture-registry-missing",
-            branch_repo_path,
-            "architecture-sensitive paths lack a changed branch record or scoped no-impact task: "
-            + ", ".join(sorted(uncovered)),
-        ),
-    ], []
+        usable_change_paths: set[str] = set()
+        wrong_branch_records: list[str] = []
+        for record in linked_changes:
+            if record.rel_path in invalid_paths or record.related_task_path != task.path:
+                continue
+            record_branch = clean(record.metadata.get("Branch", ""))
+            if record_branch != branch:
+                wrong_branch_records.append(
+                    f"{record.rel_path} ({record_branch or 'missing Branch'})"
+                )
+                continue
+            if record.stale_after_days is None:
+                if record.rel_path not in freshness_reported:
+                    gate_findings.append(
+                        Finding(
+                            "architecture-evidence-freshness",
+                            record.rel_path,
+                            "gate-required architecture change evidence must declare "
+                            "a positive Stale after days value",
+                        )
+                    )
+                    freshness_reported.add(record.rel_path)
+                continue
+            if (
+                record.verified_at is None
+                or record.stale_age_days is None
+                or record.stale_age_days > record.stale_after_days
+            ):
+                continue
+            usable_change_paths.update(
+                path
+                for path in covered_sensitive
+                if covered_by_patterns(path, record.affected_paths)
+            )
+
+        requires_change_record = impact == "confirmed" or mode == "STRICT"
+        if requires_change_record:
+            missing_change_paths = sorted(set(covered_sensitive) - usable_change_paths)
+            if missing_change_paths:
+                requirement = (
+                    "STRICT sensitive work"
+                    if mode == "STRICT" and impact != "confirmed"
+                    else "confirmed Architecture impact"
+                )
+                message = (
+                    f"{requirement} requires valid, fresh, linked architecture/changes "
+                    "evidence covering: "
+                    + ", ".join(missing_change_paths)
+                )
+                if wrong_branch_records:
+                    message += "; linked records do not match current branch: " + ", ".join(
+                        wrong_branch_records
+                    )
+                gate_findings.append(
+                    Finding("architecture-change-evidence", task.rel_path, message)
+                )
+            if usable_change_paths:
+                uncovered.difference_update(usable_change_paths)
+                used_change_evidence = True
+            continue
+
+        if impact in gate["no_registry_impacts"]:
+            uncovered.difference_update(covered_sensitive)
+            used_no_impact = True
+            continue
+
+        if usable_change_paths:
+            uncovered.difference_update(usable_change_paths)
+            used_change_evidence = True
+        if (
+            impact in {"possible", "architecture-change"}
+            and branch_evidence
+            and (
+                branch_path in task.architecture_links
+                or task.metadata.get("Mode") is None
+            )
+        ):
+            uncovered.difference_update(covered_sensitive)
+            used_branch_evidence = True
+
+    if uncovered:
+        gate_findings.append(
+            Finding(
+                "architecture-registry-missing",
+                branch_repo_path,
+                "architecture-sensitive paths are not covered by valid current-branch "
+                "task evidence: "
+                + ", ".join(sorted(uncovered)),
+            )
+        )
+    if used_change_evidence:
+        notes.append("validated architecture change evidence for current-branch tasks")
+    if used_branch_evidence:
+        notes.append(f"validated branch architecture evidence: {branch_repo_path}")
+    if used_no_impact:
+        notes.append("architecture-sensitive paths are covered by current no-impact task records")
+    return gate_findings, notes
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -1634,11 +2069,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         files = data_files(agents_root)
         findings: list[Finding] = []
         findings.extend(scan_symlinks(agents_root))
-        findings.extend(
-            scan_tasks(agents_root, git_root, policy, validation_date, warnings)
+        task_findings, task_records = scan_tasks(
+            agents_root, git_root, policy, validation_date, warnings
         )
+        findings.extend(task_findings)
+        record_findings, architecture_records = scan_records(
+            agents_root,
+            git_root,
+            policy,
+            validation_date,
+            warnings,
+            task_records,
+        )
+        findings.extend(record_findings)
         findings.extend(
-            scan_records(agents_root, git_root, policy, validation_date, warnings)
+            validate_architecture_relationships(
+                task_records,
+                architecture_records,
+                warnings,
+            )
         )
         findings.extend(scan_trust_and_secrets(agents_root, files, policy))
         findings.extend(scan_links(agents_root, project_root, files))
@@ -1669,11 +2118,23 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
             else:
                 notes.append(f"architecture base resolved from {base_source}: {base_ref}")
-                gate_findings, gate_notes = scan_architecture_gate(
-                    git_root, agents_root, base_ref, policy, findings
-                )
-                findings.extend(gate_findings)
-                notes.extend(gate_notes)
+                if not current_git_branch(git_root):
+                    warnings.append(
+                        "architecture gate skipped: checkout-relative evidence cannot "
+                        "be selected because HEAD is detached"
+                    )
+                else:
+                    gate_findings, gate_notes = scan_architecture_gate(
+                        git_root,
+                        agents_root,
+                        base_ref,
+                        policy,
+                        findings,
+                        task_records,
+                        architecture_records,
+                    )
+                    findings.extend(gate_findings)
+                    notes.extend(gate_notes)
         if git_root is None:
             warnings.append(
                 "Git metadata object validation skipped: no Git repository was resolved"

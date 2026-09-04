@@ -11,6 +11,7 @@
 - Delivery gate: `not-applicable | pending | passed | risk-accepted`
 - Source commit:
 - Verified at: `YYYY-MM-DD`
+- Stale after days: `30`
 - Affected paths:
 - Data classification: `internal`
 - Provenance: `project-authored`
