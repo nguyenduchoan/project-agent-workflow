@@ -41,5 +41,5 @@ the documented target boundary requires explicit design review.
 3. Merge only after the pinned CI workflow passes on the minimum Python version.
 4. Create a signed `v<version>` tag from the reviewed commit and publish source
    archives from that tag.
-5. For the first public release, replace the example owner/URL in `README.md` with
-   the canonical repository URL.
+5. For the first public release, verify the canonical repository URL and version
+   used by the one-command example in `README.md`.

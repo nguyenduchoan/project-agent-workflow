@@ -54,13 +54,12 @@ Preview the result without writing:
 /absolute/path/to/project-agent-workflow/install.sh --dry-run
 ```
 
-For a public release, consumers can keep one trusted local checkout and use the
-installation command above for every new project. They can also clone a pinned tag
-to a temporary path and install in one shell command; replace the example URL after
-the repository is published:
+Consumers can keep one trusted local checkout and use the installation command
+above for every new project. After `v1.0.0` is tagged, they can also clone that
+pinned release to a temporary path and install in one shell command:
 
 ```sh
-git clone --depth 1 --branch v1.0.0 https://github.com/OWNER/project-agent-workflow.git /tmp/project-agent-workflow-v1.0.0 && /tmp/project-agent-workflow-v1.0.0/install.sh --project "$PWD"
+git clone --depth 1 --branch v1.0.0 https://github.com/nguyenduchoan/skill-agile-agent.git /tmp/project-agent-workflow-v1.0.0 && /tmp/project-agent-workflow-v1.0.0/install.sh --project "$PWD"
 ```
 
 The installer deliberately does not stage or commit. Review the generated files,
