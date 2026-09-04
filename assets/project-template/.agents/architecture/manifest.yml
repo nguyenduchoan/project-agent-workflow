@@ -1,0 +1,27 @@
+schema_version: 1
+status: discovery-required
+updated_at: null
+purpose: >
+  Project-local architecture index. Populate only verified boundaries, runtimes,
+  integrations, critical invariants, and authoritative source paths.
+
+knowledge_registry:
+  root: .agents/architecture
+  branch_history: .agents/architecture/branches
+  change_records: .agents/architecture/changes
+  flows: .agents/architecture/flows.md
+  read_order: >
+    Read this manifest, then the current branch record, then only the relevant flow
+    and linked change records. Verify source when context is missing or stale.
+
+project:
+  name: null
+  languages: []
+  frameworks: []
+  build_systems: []
+
+module_boundaries: {}
+runtimes: {}
+state_and_integrations: {}
+critical_invariants: []
+authoritative_paths: {}

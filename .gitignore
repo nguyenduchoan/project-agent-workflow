@@ -1,0 +1,17 @@
+# Keep the complete distribution visible even with broad user-level ignores.
+!/.github/
+!/.github/**
+!/agents/
+!/agents/**
+!/assets/
+!/assets/**
+!/references/
+!/references/**
+!/scripts/
+!/scripts/**
+!/tests/
+!/tests/**
+
+__pycache__/
+*.py[cod]
+.DS_Store

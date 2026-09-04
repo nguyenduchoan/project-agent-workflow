@@ -1,0 +1,194 @@
+{
+  "schema_version": 1,
+  "tasks": {
+    "canonical_states": [
+      "todo",
+      "in-progress",
+      "blocked",
+      "in-review",
+      "done",
+      "cancelled"
+    ],
+    "directory_states": {
+      "tasks/active/*.md": [
+        "todo",
+        "in-progress",
+        "blocked",
+        "in-review"
+      ],
+      "tasks/history/completed/*.md": [
+        "done"
+      ],
+      "tasks/history/cancelled/*.md": [
+        "cancelled"
+      ]
+    },
+    "architecture_impacts": [
+      "none",
+      "documentation-only",
+      "architecture-change"
+    ],
+    "delivery_gates": [
+      "not-applicable",
+      "pending",
+      "passed",
+      "risk-accepted"
+    ],
+    "required_metadata": [
+      "ID",
+      "Status",
+      "Delivery gate",
+      "Owner",
+      "Reviewer",
+      "Created",
+      "Updated",
+      "Branch",
+      "Base ref / merge-base",
+      "Source commit",
+      "Affected paths",
+      "Architecture impact",
+      "Data classification",
+      "Provenance",
+      "Executable"
+    ]
+  },
+  "records": {
+    "branch_required_metadata": [
+      "Branch",
+      "Slug",
+      "Created",
+      "Updated",
+      "Base ref",
+      "Merge-base",
+      "Current head",
+      "Source commit",
+      "Verified at",
+      "Stale after days",
+      "Data classification",
+      "Provenance",
+      "Executable"
+    ],
+    "change_required_metadata": [
+      "ID",
+      "Date",
+      "Branch",
+      "Base ref / merge-base",
+      "Head snapshot",
+      "Related task",
+      "Status",
+      "Delivery gate",
+      "Source commit",
+      "Verified at",
+      "Affected paths",
+      "Data classification",
+      "Provenance",
+      "Executable"
+    ],
+    "change_statuses": [
+      "proposed",
+      "accepted",
+      "implemented",
+      "superseded"
+    ]
+  },
+  "architecture_gate": {
+    "branch_history_template": "architecture/branches/{branch_slug}.md",
+    "no_registry_impacts": [
+      "none",
+      "documentation-only"
+    ],
+    "sensitive_globs": [
+      "pom.xml",
+      "*/pom.xml",
+      "build.gradle",
+      "*/build.gradle",
+      "build.gradle.kts",
+      "*/build.gradle.kts",
+      "package.json",
+      "*/package.json",
+      "Cargo.toml",
+      "*/Cargo.toml",
+      "go.mod",
+      "*/go.mod",
+      "Dockerfile",
+      "*/Dockerfile",
+      "docker-compose*.yml",
+      "docker-compose*.yaml",
+      ".github/workflows/*",
+      "*.tf",
+      "migrations/*",
+      "*/migrations/*",
+      "db/migration/*",
+      "*/db/migration/*",
+      "config/*",
+      "*/config/*",
+      "controllers/*",
+      "*/controllers/*",
+      "controller/*",
+      "*/controller/*",
+      "consumers/*",
+      "*/consumers/*",
+      "consumer/*",
+      "*/consumer/*",
+      "providers/*",
+      "*/providers/*",
+      "provider/*",
+      "*/provider/*",
+      "*Security*",
+      "*Auth*",
+      "*Lock*"
+    ]
+  },
+  "trust": {
+    "allowed_classifications": [
+      "public",
+      "internal",
+      "confidential"
+    ],
+    "allowed_provenance": [
+      "project-authored",
+      "runtime-evidence",
+      "external-reference",
+      "generated"
+    ],
+    "required_executable": "false",
+    "forbidden_patterns": [
+      {
+        "id": "private-key",
+        "regex": "-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"
+      },
+      {
+        "id": "bearer-credential",
+        "regex": "(?i)\\bauthorization\\s*[:=]\\s*bearer\\s+[A-Za-z0-9._~+/=-]{16,}"
+      },
+      {
+        "id": "jwt-credential",
+        "regex": "\\beyJ[A-Za-z0-9_-]{8,}\\.eyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{16,}\\b"
+      },
+      {
+        "id": "credential-in-url",
+        "regex": "(?i)\\b(?:https?|postgres(?:ql)?|redis)://[^/\\s:@]+:[^/\\s@]+@"
+      },
+      {
+        "id": "aws-access-key",
+        "regex": "\\bAKIA[0-9A-Z]{16}\\b"
+      },
+      {
+        "id": "github-token",
+        "regex": "\\b(?:ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,})\\b"
+      }
+    ]
+  },
+  "context_budget": {
+    "total_bytes": 2097152,
+    "default_file_bytes": 32768,
+    "path_limits": {
+      "architecture/manifest.yml": 20480,
+      "architecture/branches/*.md": 32768,
+      "architecture/changes/*.md": 24576,
+      "architecture/flows.md": 65536,
+      "tasks/active/*.md": 32768,
+      "tasks/history/*/*.md": 65536
+    }
+  }
+}

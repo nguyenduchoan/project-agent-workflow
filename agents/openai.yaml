@@ -1,0 +1,7 @@
+interface:
+  display_name: "Project Agent Workflow"
+  short_description: "Run project-local task and architecture workflow"
+  default_prompt: "Use $project-agent-workflow to bootstrap this repository with a project-local agent workflow."
+
+policy:
+  allow_implicit_invocation: true
