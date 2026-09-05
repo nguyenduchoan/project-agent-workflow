@@ -62,7 +62,10 @@ bash /absolute/path/to/project-agent-workflow/install.sh --host all --dry-run
   packages use only trusted registered destinations. The only additional write is a
   marked allow block in the repository-root `.gitignore`. The block always tracks
   `.agents` and adds narrow host-specific rules only for selected hosts plus
-  recognized already-installed hosts. A fresh Codex-only install therefore has the
+  recognized already-installed hosts, preserving canonical rules already present
+  for unselected hosts. Recognition checks package identity and a complete runtime
+  manifest using the current package's verifier; an arbitrary directory at a host
+  destination is insufficient. A fresh Codex-only install therefore has the
   minimal block:
 
   ```gitignore
@@ -77,6 +80,9 @@ bash /absolute/path/to/project-agent-workflow/install.sh --host all --dry-run
   `.claude` files.
 - A symlink in a managed destination path stops installation.
 - Package runtime `.py` and `.sh` files must not be group- or world-writable.
+- When a source file has execute bits, an existing destination must retain at
+  least one execute bit. Missing executable capability fails preflight before any
+  writes; an exact `0755` mode is not required.
 - A missing file is created atomically; an identical existing file is content- and
   path-rechecked immediately before it is reported unchanged.
 - A different existing file is a conflict and stops the entire preflight before
@@ -86,6 +92,8 @@ bash /absolute/path/to/project-agent-workflow/install.sh --host all --dry-run
   before mutation, preventing a later-host conflict from causing partial install.
 - Existing `.gitignore` content is preserved. Missing or canonical managed blocks
   are appended/moved to the end; malformed or duplicated markers fail closed.
+  The planned bytes and existence are rechecked immediately before replacement;
+  a changed or newly appeared file stops the operation without later host writes.
 - The installer never accepts an arbitrary destination, executes host/preference
   data, edits `AGENTS.md`, `.git/hooks`, `.claude/settings.json`, `.claude/hooks`,
   `.claude/commands`, user-level host directories, or global Git configuration,

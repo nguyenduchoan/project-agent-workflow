@@ -103,6 +103,8 @@ def check_file(
             raise ValueError(f"conflict: existing file differs and will not be overwritten: {dst}")
         if src.suffix.lower() in {".py", ".sh"} and dst.stat().st_mode & 0o022:
             raise ValueError(f"managed runtime code is group/world-writable: {dst}")
+        if src.stat().st_mode & 0o111 and not dst.stat().st_mode & 0o111:
+            raise ValueError(f"managed destination is not executable as required by source: {dst}")
 
 
 def _same_content(left: Path, right: Path) -> bool:
@@ -272,6 +274,9 @@ def main() -> int:
         manifest = parse_manifest(source / "skill-manifest.txt")
         template_files = source_files(source, manifest)
         runtime = runtime_files(source, manifest)
+        # Load executable helpers only after rejecting symlinked source artifacts.
+        import ensure_parent_tracking as tracking
+
         for host in hosts:
             destination = assert_destination(host, repo)
             check_tree(destination, {name for _, name in runtime}, repo)
@@ -295,11 +300,13 @@ def main() -> int:
         if language is not None:
             preferences = with_language(existing_preferences, language)
             print(f"project-agent-workflow-installer: Language preference: {language}")
-        tracking = source / "scripts/ensure_parent_tracking.py"
-        tracking_command = [sys.executable, str(tracking), "--project", str(repo)]
-        for host in hosts:
-            tracking_command.extend(["--host", host.id])
-        subprocess.run([*tracking_command, "--check"], check=True)
+        tracking_path = repo / ".gitignore"
+        tracking_hosts = tracking.relevant_hosts(repo, [host.id for host in hosts])
+        tracking_plan = tracking.desired_content(tracking_path, tracking_hosts)
+        if tracking_plan.action == "unchanged":
+            print(f"parent tracking: unchanged {tracking_path}")
+        else:
+            print(f"parent tracking: preflight allows {tracking_plan.action} in {tracking_path}")
         if language is not None or preferences_path.exists():
             if preferences_path.exists() and not preferences_path.is_file():
                 raise ValueError("preferences path must be a regular file")
@@ -321,7 +328,7 @@ def main() -> int:
             elif language is not None:
                 print("project-agent-workflow-installer: unchanged .agents/preferences.json")
         if not args.dry_run:
-            subprocess.run([*tracking_command, "--apply"], check=True)
+            tracking.apply_plan(tracking_path, tracking_hosts, tracking_plan)
         else:
             print("project-agent-workflow-installer: dry-run shared tracking check")
         for src, relative in template_files:

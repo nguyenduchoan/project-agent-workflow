@@ -102,6 +102,18 @@ grep -Fqx "!/.claude/skills/project-agent-workflow/**" "$claude_only/.gitignore"
   fail "Claude-only install omitted Claude tracking"
 pass "fresh Claude-only install scopes host packages and tracking"
 
+unrecognized_host="$temporary_root/unrecognized-host"
+init_repo "$unrecognized_host"
+mkdir -p "$unrecognized_host/.claude/skills/project-agent-workflow"
+printf '%s\n' "user data" >"$unrecognized_host/.claude/skills/project-agent-workflow/unrelated.txt"
+sh "$installer" --project "$unrecognized_host" --host codex >"$temporary_root/unrecognized-host.out"
+if grep -Fqx "!/.claude/" "$unrecognized_host/.gitignore"; then
+  fail "arbitrary unselected directory was treated as an installed host"
+fi
+[ "$(cat "$unrecognized_host/.claude/skills/project-agent-workflow/unrelated.txt")" = "user data" ] ||
+  fail "selected-host install modified unrelated host data"
+pass "arbitrary unselected destination does not add host tracking"
+
 host_expansion="$temporary_root/host-expansion"
 init_repo "$host_expansion"
 sh "$installer" --project "$host_expansion" --host codex >"$temporary_root/host-expansion-codex.out"
@@ -268,9 +280,8 @@ printf '%s\n' \
 git -C "$round3_tracking" add .gitignore
 git -C "$round3_tracking" commit -qm "add Round 3 managed block"
 sh "$installer" --project "$round3_tracking" --host codex >"$temporary_root/round3-tracking.out"
-if grep -Fqx "!/.claude/" "$round3_tracking/.gitignore"; then
-  fail "Round 3 tracking block was not safely narrowed for Codex-only install"
-fi
+grep -Fqx "!/.claude/skills/project-agent-workflow/**" "$round3_tracking/.gitignore" ||
+  fail "Codex-only install removed existing unselected host tracking"
 pass "Round 3 full-host tracking block remains migration-compatible"
 
 malformed="$temporary_root/malformed-ignore"
@@ -462,6 +473,16 @@ sh "$installer" --project "$multi" --host all >"$temporary_root/multi-reinstall.
 [ "$before_preferences" = "$(cksum "$multi/.agents/preferences.json")" ] || fail "existing preference changed without --language"
 pass "existing language preference is preserved"
 
+for safe_mode in 0700 0744; do
+  chmod "$safe_mode" "$multi/.agents/skills/project-agent-workflow/install.sh"
+  sh "$installer" --project "$multi" --host codex >"$temporary_root/executable-capability.out"
+  python3 -c 'import pathlib, stat, sys; raise SystemExit(0 if stat.S_IMODE(pathlib.Path(sys.argv[1]).stat().st_mode) == int(sys.argv[2], 8) else 1)' \
+    "$multi/.agents/skills/project-agent-workflow/install.sh" "$safe_mode" ||
+    fail "installer changed an existing safe executable mode"
+done
+chmod 0755 "$multi/.agents/skills/project-agent-workflow/install.sh"
+pass "safe executable modes need not equal 0755"
+
 python3 - "$multi/.agents/preferences.json" <<'PY'
 import json
 import sys
@@ -548,6 +569,8 @@ sh "$installer" --project "$scoped_verification" --host codex \
   fail "Codex operation did not complete with unrelated broken Claude package"
 [ ! -e "$scoped_verification/.claude/skills/project-agent-workflow/SKILL.md" ] ||
   fail "Codex operation modified the unrelated broken Claude package"
+grep -Fqx "!/.claude/skills/project-agent-workflow/**" "$scoped_verification/.gitignore" ||
+  fail "Codex operation removed existing tracking for the unrelated broken host"
 scoped_verifier="$scoped_verification/.agents/skills/project-agent-workflow/scripts/verify_install.py"
 python3 "$scoped_verifier" --project "$scoped_verification" --host codex \
   >"$temporary_root/scoped-verification-operation.out"
