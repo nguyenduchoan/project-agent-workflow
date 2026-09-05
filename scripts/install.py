@@ -103,7 +103,7 @@ def check_file(
             raise ValueError(f"conflict: existing file differs and will not be overwritten: {dst}")
         if src.suffix.lower() in {".py", ".sh"} and dst.stat().st_mode & 0o022:
             raise ValueError(f"managed runtime code is group/world-writable: {dst}")
-        if src.stat().st_mode & 0o111 and not dst.stat().st_mode & 0o111:
+        if src.stat().st_mode & 0o111 and not os.access(dst, os.X_OK):
             raise ValueError(f"managed destination is not executable as required by source: {dst}")
 
 
