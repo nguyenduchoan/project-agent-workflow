@@ -127,5 +127,60 @@ class ArchitecturePolicyTests(unittest.TestCase):
             self.assertIn("ERROR [architecture-registry-missing]", result.stdout)
 
 
+class PreferencesValidationTests(unittest.TestCase):
+    def test_missing_and_valid_preferences_pass(self) -> None:
+        with ValidatorRepo("main") as repo:
+            missing = repo.run_validator("--no-architecture-gate", "--today", "2026-09-04")
+            self.assertEqual(0, missing.returncode, missing.stdout + missing.stderr)
+            repo.write(
+                ".agents/preferences.json",
+                '{"language":{"responses":"vi","generated_documents":"pt-BR",'
+                '"preserve_existing_document_language":true}}\n',
+            )
+            valid = repo.run_validator("--no-architecture-gate", "--today", "2026-09-04")
+            self.assertEqual(0, valid.returncode, valid.stdout + valid.stderr)
+
+    def test_malformed_preferences_are_validation_errors(self) -> None:
+        cases = (
+            ("{not-json}\n", "malformed preferences file"),
+            ('{"language":{"responses":"bad tag"}}\n', "invalid language tag"),
+            (
+                '{"language":{"preserve_existing_document_language":"true"}}\n',
+                "must be boolean",
+            ),
+        )
+        for content, message in cases:
+            with self.subTest(message=message), ValidatorRepo("main") as repo:
+                repo.write(".agents/preferences.json", content)
+                result = repo.run_validator(
+                    "--no-architecture-gate", "--today", "2026-09-04"
+                )
+                self.assertEqual(1, result.returncode, result.stdout + result.stderr)
+                self.assertIn("ERROR [preferences] preferences.json", result.stdout)
+                self.assertIn(message, result.stdout)
+
+    def test_dangling_preferences_symlink_is_rejected(self) -> None:
+        with ValidatorRepo("main") as repo:
+            (repo.root / ".agents/preferences.json").symlink_to("missing-preferences.json")
+            result = repo.run_validator(
+                "--no-architecture-gate", "--today", "2026-09-04"
+            )
+            self.assertEqual(1, result.returncode, result.stdout + result.stderr)
+            self.assertIn("ERROR [preferences] preferences.json", result.stdout)
+            self.assertIn("must be a regular file", result.stdout)
+
+    def test_unknown_preferences_keys_remain_forward_compatible(self) -> None:
+        with ValidatorRepo("main") as repo:
+            repo.write(
+                ".agents/preferences.json",
+                '{"future":{"enabled":true},"language":{"responses":"en",'
+                '"future_language_key":"data-only"}}\n',
+            )
+            result = repo.run_validator(
+                "--no-architecture-gate", "--today", "2026-09-04"
+            )
+            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

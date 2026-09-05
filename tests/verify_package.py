@@ -223,17 +223,25 @@ def main() -> int:
     verify_skill_metadata(errors)
     verify_host_registry(errors, entries)
 
+    runtime_code_paths = [
+        PACKAGE_ROOT / entry
+        for entry in entries
+        if Path(entry).suffix.lower() in {".py", ".sh"}
+    ]
+    runtime_code_paths.extend((PACKAGE_ROOT / "tests").glob("*.sh"))
+    runtime_code_paths.extend((PACKAGE_ROOT / "tests").glob("*.py"))
+    for path in sorted(set(runtime_code_paths)):
+        if path.is_file() and path.stat().st_mode & 0o022:
+            errors.append(f"runtime code is group/world-writable: {relative(path)}")
+
     executable_paths = [PACKAGE_ROOT / "install.sh"]
     executable_paths.extend((PACKAGE_ROOT / "scripts").glob("*.sh"))
     executable_paths.extend((PACKAGE_ROOT / "scripts").glob("*.py"))
     executable_paths.extend((PACKAGE_ROOT / "tests").glob("*.sh"))
     executable_paths.extend((PACKAGE_ROOT / "tests").glob("*.py"))
     for path in sorted(set(executable_paths)):
-        if path.is_file():
-            if not os.access(path, os.X_OK):
-                errors.append(f"script is not executable: {relative(path)}")
-            if path.stat().st_mode & 0o022:
-                errors.append(f"script is group/world-writable: {relative(path)}")
+        if path.is_file() and not os.access(path, os.X_OK):
+            errors.append(f"script is not executable: {relative(path)}")
 
     if errors:
         for error in sorted(set(errors)):

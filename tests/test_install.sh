@@ -73,6 +73,9 @@ cmp -s "$package_root/VERSION" "$fresh/.agents/skills/project-agent-workflow/VER
   fail "release-only tests were copied into the installed skill"
 [ -f "$fresh/.gitignore" ] || fail "parent .gitignore was not created"
 grep -Fqx "!/.agents/**" "$fresh/.gitignore" || fail "parent tracking allow rule is missing"
+if grep -Fqx "!/.claude/" "$fresh/.gitignore"; then
+  fail "Codex-only install added an unrelated Claude tracking rule"
+fi
 [ ! -e "$fresh/.agents/.git" ] || fail "installer created a nested Git repository"
 [ ! -e "$fresh/.git/hooks/post-commit" ] || fail "installer modified parent Git hooks"
 if git -C "$fresh" check-ignore --no-index -q -- \
@@ -85,6 +88,44 @@ git -C "$fresh" status --short --untracked-files=all | \
 python3 "$fresh/.agents/skills/project-agent-workflow/scripts/verify_install.py" \
   --project "$fresh" >"$temporary_root/verify.out"
 pass "one-command install from the target working directory"
+
+claude_only="$temporary_root/claude-only"
+init_repo "$claude_only"
+sh "$installer" --project "$claude_only" --host claude-code >"$temporary_root/claude-only.out"
+[ -f "$claude_only/.claude/skills/project-agent-workflow/SKILL.md" ] ||
+  fail "Claude-only install omitted the selected host package"
+[ ! -e "$claude_only/.agents/skills/project-agent-workflow" ] ||
+  fail "Claude-only install created the unselected Codex host package"
+grep -Fqx "!/.agents/**" "$claude_only/.gitignore" ||
+  fail "Claude-only install omitted shared .agents tracking"
+grep -Fqx "!/.claude/skills/project-agent-workflow/**" "$claude_only/.gitignore" ||
+  fail "Claude-only install omitted Claude tracking"
+pass "fresh Claude-only install scopes host packages and tracking"
+
+unrecognized_host="$temporary_root/unrecognized-host"
+init_repo "$unrecognized_host"
+mkdir -p "$unrecognized_host/.claude/skills/project-agent-workflow"
+printf '%s\n' "user data" >"$unrecognized_host/.claude/skills/project-agent-workflow/unrelated.txt"
+sh "$installer" --project "$unrecognized_host" --host codex >"$temporary_root/unrecognized-host.out"
+if grep -Fqx "!/.claude/" "$unrecognized_host/.gitignore"; then
+  fail "arbitrary unselected directory was treated as an installed host"
+fi
+[ "$(cat "$unrecognized_host/.claude/skills/project-agent-workflow/unrelated.txt")" = "user data" ] ||
+  fail "selected-host install modified unrelated host data"
+pass "arbitrary unselected destination does not add host tracking"
+
+host_expansion="$temporary_root/host-expansion"
+init_repo "$host_expansion"
+sh "$installer" --project "$host_expansion" --host codex >"$temporary_root/host-expansion-codex.out"
+if grep -Fqx "!/.claude/" "$host_expansion/.gitignore"; then
+  fail "initial Codex install added Claude tracking"
+fi
+sh "$installer" --project "$host_expansion" --host claude-code >"$temporary_root/host-expansion-claude.out"
+[ -f "$host_expansion/.agents/skills/project-agent-workflow/SKILL.md" ] ||
+  fail "later Claude install removed the existing Codex package"
+grep -Fqx "!/.claude/skills/project-agent-workflow/**" "$host_expansion/.gitignore" ||
+  fail "later Claude install did not expand tracking rules"
+pass "tracking rules expand when another host is installed later"
 
 spaced_source="$temporary_root/source package"
 spaced_target="$temporary_root/target project"
@@ -222,6 +263,26 @@ if git -C "$relocated" check-ignore --no-index -q -- .agents/README.md; then
   fail "relocated managed block did not make .agents trackable"
 fi
 pass "managed tracking block is canonicalized at the end"
+
+round3_tracking="$temporary_root/round3-tracking"
+init_repo "$round3_tracking"
+printf '%s\n' \
+  "# project-agent-workflow: begin" \
+  "!/.agents/" \
+  "!/.agents/**" \
+  "!/.claude/" \
+  "/.claude/*" \
+  "!/.claude/skills/" \
+  "/.claude/skills/*" \
+  "!/.claude/skills/project-agent-workflow/" \
+  "!/.claude/skills/project-agent-workflow/**" \
+  "# project-agent-workflow: end" >"$round3_tracking/.gitignore"
+git -C "$round3_tracking" add .gitignore
+git -C "$round3_tracking" commit -qm "add Round 3 managed block"
+sh "$installer" --project "$round3_tracking" --host codex >"$temporary_root/round3-tracking.out"
+grep -Fqx "!/.claude/skills/project-agent-workflow/**" "$round3_tracking/.gitignore" ||
+  fail "Codex-only install removed existing unselected host tracking"
+pass "Round 3 full-host tracking block remains migration-compatible"
 
 malformed="$temporary_root/malformed-ignore"
 init_repo "$malformed"
@@ -400,10 +461,27 @@ fi
 grep -Fq '"responses": "pt-BR"' "$multi/.agents/preferences.json" || fail "shared language preference missing"
 pass "multiple trusted hosts share one language preference"
 
+sh "$installer" --project "$multi" --host codex >"$temporary_root/multi-codex-update.out"
+grep -Fqx "!/.claude/skills/project-agent-workflow/**" "$multi/.gitignore" ||
+  fail "Codex-only update removed tracking for an installed Claude package"
+[ -f "$multi/.claude/skills/project-agent-workflow/SKILL.md" ] ||
+  fail "Codex-only update changed the installed Claude package"
+pass "selected-host update preserves recognized installed-host tracking"
+
 before_preferences=$(cksum "$multi/.agents/preferences.json")
 sh "$installer" --project "$multi" --host all >"$temporary_root/multi-reinstall.out"
 [ "$before_preferences" = "$(cksum "$multi/.agents/preferences.json")" ] || fail "existing preference changed without --language"
 pass "existing language preference is preserved"
+
+for safe_mode in 0700 0744; do
+  chmod "$safe_mode" "$multi/.agents/skills/project-agent-workflow/install.sh"
+  sh "$installer" --project "$multi" --host codex >"$temporary_root/executable-capability.out"
+  python3 -c 'import pathlib, stat, sys; raise SystemExit(0 if stat.S_IMODE(pathlib.Path(sys.argv[1]).stat().st_mode) == int(sys.argv[2], 8) else 1)' \
+    "$multi/.agents/skills/project-agent-workflow/install.sh" "$safe_mode" ||
+    fail "installer changed an existing safe executable mode"
+done
+chmod 0755 "$multi/.agents/skills/project-agent-workflow/install.sh"
+pass "safe executable modes need not equal 0755"
 
 python3 - "$multi/.agents/preferences.json" <<'PY'
 import json
@@ -420,23 +498,89 @@ grep -Fq '"responses": "vi"' "$multi/.agents/preferences.json" || fail "explicit
 grep -Fq '"preserved": true' "$multi/.agents/preferences.json" || fail "language update removed unrelated keys"
 pass "explicit language update preserves unrelated preferences"
 
-chmod 0775 "$multi/.agents/skills/project-agent-workflow/scripts/validate_registry.py"
-if python3 "$multi/.agents/skills/project-agent-workflow/scripts/verify_install.py" --project "$multi" \
-  >"$temporary_root/permissions.out" 2>&1; then
-  fail "group-writable executable was accepted"
+shell_runtime="$multi/.agents/skills/project-agent-workflow/scripts/install.sh"
+python_runtime="$multi/.agents/skills/project-agent-workflow/scripts/registry/preferences.py"
+verifier_runtime="$multi/.agents/skills/project-agent-workflow/scripts/verify_install.py"
+
+chmod 0755 "$shell_runtime"
+python3 "$verifier_runtime" --project "$multi" --all-installed-hosts \
+  >"$temporary_root/permissions-shell-safe.out"
+chmod 0775 "$shell_runtime"
+if python3 "$verifier_runtime" --project "$multi" --all-installed-hosts \
+  >"$temporary_root/permissions-shell-group.out" 2>&1; then
+  fail "group-writable shell runtime was accepted"
 fi
-grep -Fq "group/world-writable" "$temporary_root/permissions.out" || fail "permission drift was not reported"
-chmod 0755 "$multi/.agents/skills/project-agent-workflow/scripts/validate_registry.py"
-chmod 0777 "$multi/.agents/skills/project-agent-workflow/scripts/validate_registry.py"
-if python3 "$multi/.agents/skills/project-agent-workflow/scripts/verify_install.py" --project "$multi" \
-  >"$temporary_root/permissions-world.out" 2>&1; then
-  fail "world-writable executable was accepted"
+grep -Fq "group/world-writable" "$temporary_root/permissions-shell-group.out" ||
+  fail "group-writable shell runtime was not reported"
+chmod 0777 "$shell_runtime"
+if python3 "$verifier_runtime" --project "$multi" --all-installed-hosts \
+  >"$temporary_root/permissions-shell-world.out" 2>&1; then
+  fail "world-writable shell runtime was accepted"
 fi
-chmod 0755 "$multi/.agents/skills/project-agent-workflow/scripts/validate_registry.py"
+chmod 0755 "$shell_runtime"
+
+chmod 0644 "$python_runtime"
+python3 "$verifier_runtime" --project "$multi" --all-installed-hosts \
+  >"$temporary_root/permissions-python-safe.out"
+chmod 0664 "$python_runtime"
+if python3 "$verifier_runtime" --project "$multi" --all-installed-hosts \
+  >"$temporary_root/permissions-python-group.out" 2>&1; then
+  fail "group-writable imported Python runtime was accepted"
+fi
+grep -Fq "group/world-writable" "$temporary_root/permissions-python-group.out" ||
+  fail "group-writable imported Python runtime was not reported"
+chmod 0666 "$python_runtime"
+if python3 "$verifier_runtime" --project "$multi" --all-installed-hosts \
+  >"$temporary_root/permissions-python-world.out" 2>&1; then
+  fail "world-writable imported Python runtime was accepted"
+fi
+chmod 0644 "$python_runtime"
 python3 -c 'import pathlib, stat, sys; raise SystemExit(0 if stat.S_IMODE(pathlib.Path(sys.argv[1]).stat().st_mode) == 0o644 else 1)' \
   "$multi/.agents/preferences.json" ||
   fail "non-executable preference file does not use safe permissions"
-pass "unsafe executable permissions are rejected"
+pass "unsafe shell and imported Python runtime permissions are rejected"
+
+codex_tracking="$multi/.agents/skills/project-agent-workflow/scripts/ensure_parent_tracking.py"
+claude_verifier="$multi/.claude/skills/project-agent-workflow/scripts/verify_install.py"
+cp "$codex_tracking" "$temporary_root/codex-tracking-current.py"
+cat >"$codex_tracking" <<'PY'
+#!/usr/bin/env python3
+import sys
+
+if "--host" in sys.argv:
+    raise SystemExit(2)
+print("parent tracking: unchanged")
+PY
+chmod 0755 "$codex_tracking"
+python3 "$claude_verifier" --project "$multi" --all-installed-hosts \
+  >"$temporary_root/mixed-version-audit.out"
+cp "$temporary_root/codex-tracking-current.py" "$codex_tracking"
+chmod 0755 "$codex_tracking"
+pass "full audit uses the tracking helper beside the current verifier"
+
+scoped_verification="$temporary_root/scoped-verification"
+init_repo "$scoped_verification"
+sh "$installer" --project "$scoped_verification" --host claude-code \
+  >"$temporary_root/scoped-verification-claude.out"
+rm "$scoped_verification/.claude/skills/project-agent-workflow/SKILL.md"
+sh "$installer" --project "$scoped_verification" --host codex \
+  >"$temporary_root/scoped-verification-codex.out"
+[ -f "$scoped_verification/.agents/skills/project-agent-workflow/SKILL.md" ] ||
+  fail "Codex operation did not complete with unrelated broken Claude package"
+[ ! -e "$scoped_verification/.claude/skills/project-agent-workflow/SKILL.md" ] ||
+  fail "Codex operation modified the unrelated broken Claude package"
+grep -Fqx "!/.claude/skills/project-agent-workflow/**" "$scoped_verification/.gitignore" ||
+  fail "Codex operation removed existing tracking for the unrelated broken host"
+scoped_verifier="$scoped_verification/.agents/skills/project-agent-workflow/scripts/verify_install.py"
+python3 "$scoped_verifier" --project "$scoped_verification" --host codex \
+  >"$temporary_root/scoped-verification-operation.out"
+if python3 "$scoped_verifier" --project "$scoped_verification" --all-installed-hosts \
+  >"$temporary_root/scoped-verification-audit.out" 2>&1; then
+  fail "full installed-host audit accepted a broken Claude package"
+fi
+grep -Fq "SKILL.md" "$temporary_root/scoped-verification-audit.out" ||
+  fail "full installed-host audit did not report the broken Claude package"
+pass "operation verification excludes unrelated hosts while full audit includes them"
 
 if sh "$installer" --project "$multi" --host codex --language 'bad tag' \
   >"$temporary_root/bad-language.out" 2>&1; then
