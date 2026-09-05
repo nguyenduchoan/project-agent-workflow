@@ -27,6 +27,23 @@ warning instead. Invalid dates and non-positive thresholds remain errors at ever
 relevance level. The validator's `--today YYYY-MM-DD` option exists for
 deterministic tests and does not use network time.
 
+## Language resolution
+
+Treat `.agents/preferences.json` as host-neutral project data. Resolve response
+and generated-document language in this order: an explicit current user request,
+future task-specific language metadata, the shared preference, the language of an
+existing document when preservation is appropriate, then fallback `en`. Current
+user instructions always override stored defaults.
+
+When `preserve_existing_document_language` is true, keep the established language
+of a document being edited unless the user explicitly requests translation. Use
+`language.generated_documents` for narrative content in new task, architecture,
+review, release, incident, summary, and report artifacts. Keep parser-facing
+metadata headings and canonical enum values language-independent; never translate
+`ID`, `Status`, `Branch`, `Architecture impact`, `LIGHT`, `STANDARD`, `STRICT`,
+`active`, `none`, `possible`, or `confirmed`. Do not duplicate templates by
+language.
+
 ## Choose a mode
 
 Use one task schema with the smallest mode appropriate to the risk:
@@ -121,7 +138,12 @@ patterns, links, symlink checks, or context budgets.
 Policy exposes conservative `default_sensitive_globs`, project-owned
 `additional_sensitive_globs`, and explicit `ignored_globs`. Patterns are normalized
 to `/`; absolute paths, drive-qualified paths, NUL bytes, and traversal are
-rejected. Values are data and are never evaluated as shell expressions.
+rejected. `*` and `?` stay inside one path segment, while `**` crosses path
+segments; Windows separators are normalized to `/`. Thus `config/*` matches
+`config/dev.yml` but not `config/payment/prod.yml`, while `config/**` matches both.
+Values are data and are never evaluated as shell expressions. Round 3 updates
+shipped recursive defaults from single-level patterns to explicit `**` equivalents
+so their existing security coverage is not narrowed.
 
 ## Git metadata
 

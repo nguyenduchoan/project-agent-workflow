@@ -25,6 +25,14 @@ All notable changes are recorded here. Versions follow Semantic Versioning.
   checks without requiring task files to change in every sensitive diff.
 - Added Ubuntu/macOS coverage for the portable core CI test job and aligned Python
   command and primary-branch documentation with actual behavior.
+- Modularized the registry validator into Git, path/glob, policy, record,
+  architecture, secret, and finding modules without changing V2 workflow rules.
+- Added a generic trusted host registry with Codex and Claude Code adapters,
+  interactive multi-select, repeatable `--host`, `--host all`, host listing,
+  atomic multi-host preflight, and deterministic no-TTY behavior.
+- Added shared host-neutral BCP-47-style language preferences, safe preservation
+  and explicit update behavior, segment-aware glob semantics, and managed
+  executable permission checks.
 
 ## 1.0.0 - 2026-09-04
 

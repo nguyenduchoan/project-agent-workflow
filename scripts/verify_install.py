@@ -11,6 +11,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.dont_write_bytecode = True
+
+from registry.findings import ConfigurationError
+from registry.hosts import HOSTS, validate_registry
+from registry.preferences import load_preferences
+
 
 EXPECTED_PROJECT_FILES = (
     ".agents/README.md",
@@ -36,7 +42,18 @@ EXPECTED_SKILL_FILES = (
     "references/installation.md",
     "references/registry-workflow.md",
     "scripts/ensure_parent_tracking.py",
+    "scripts/install.py",
     "scripts/install.sh",
+    "scripts/registry/__init__.py",
+    "scripts/registry/architecture.py",
+    "scripts/registry/findings.py",
+    "scripts/registry/git.py",
+    "scripts/registry/hosts.py",
+    "scripts/registry/paths.py",
+    "scripts/registry/policy.py",
+    "scripts/registry/preferences.py",
+    "scripts/registry/records.py",
+    "scripts/registry/secrets.py",
     "scripts/validate_registry.py",
     "scripts/verify_install.py",
 )
@@ -128,29 +145,45 @@ def main() -> int:
         return 64
 
     agents_root = root / ".agents"
-    skill_root = agents_root / "skills" / "project-agent-workflow"
-    expected = [root / item for item in EXPECTED_PROJECT_FILES]
-    expected.extend(skill_root / item for item in EXPECTED_SKILL_FILES)
     errors: list[str] = []
+    try:
+        validate_registry()
+    except ConfigurationError as exc:
+        errors.append(f"invalid trusted host registry: {exc}")
+    installed_hosts = [
+        (host, root / host.destination)
+        for host in HOSTS
+        if (root / host.destination).exists() or (root / host.destination).is_symlink()
+    ]
+    if not installed_hosts:
+        errors.append("no registered host package is installed")
+
+    expected = [root / item for item in EXPECTED_PROJECT_FILES]
+    for _host, skill_root in installed_hosts:
+        expected.extend(skill_root / item for item in EXPECTED_SKILL_FILES)
 
     if agents_root.is_symlink():
         errors.append("managed .agents root is a symlink")
-    if skill_root.is_symlink():
-        errors.append("installed skill root is a symlink")
-    if skill_root.is_dir() and not skill_root.is_symlink():
-        verify_runtime_manifest(skill_root, errors)
+    for host, skill_root in installed_hosts:
+        if skill_root.is_symlink():
+            errors.append(f"installed {host.id} skill root is a symlink")
+        elif not skill_root.is_dir():
+            errors.append(f"installed {host.id} skill root is not a directory")
+        else:
+            verify_runtime_manifest(skill_root, errors)
 
-    tracking_helper = skill_root / "scripts" / "ensure_parent_tracking.py"
-    if tracking_helper.is_file():
-        tracking = subprocess.run(
-            [sys.executable, str(tracking_helper), "--project", str(root), "--check"],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        if tracking.returncode != 0 or "unchanged" not in tracking.stdout:
-            detail = tracking.stderr.strip() or tracking.stdout.strip()
-            errors.append(f"parent tracking block is not canonical: {detail}")
+    if installed_hosts:
+        tracking_helper = installed_hosts[0][1] / "scripts" / "ensure_parent_tracking.py"
+        if tracking_helper.is_file():
+            tracking = subprocess.run(
+                [sys.executable, str(tracking_helper), "--project", str(root), "--check"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if tracking.returncode != 0 or "unchanged" not in tracking.stdout:
+                detail = tracking.stderr.strip() or tracking.stdout.strip()
+                errors.append(f"parent tracking block is not canonical: {detail}")
 
     for path in expected:
         if path.is_symlink():
@@ -160,20 +193,18 @@ def main() -> int:
         elif path.stat().st_size == 0:
             errors.append(f"managed file is empty: {path.relative_to(root)}")
 
-    skill_entrypoint = skill_root / "SKILL.md"
-    if skill_entrypoint.is_file():
-        text = skill_entrypoint.read_text(encoding="utf-8")
-        if not text.startswith("---\n"):
-            errors.append("SKILL.md is missing YAML frontmatter")
-        if not re.search(r"(?m)^name:\s*project-agent-workflow\s*$", text):
-            errors.append("SKILL.md has an unexpected skill name")
-        if not re.search(r"(?m)^description:\s*\S", text):
-            errors.append("SKILL.md is missing a non-empty description")
-
-    metadata_path = skill_root / "agents" / "openai.yaml"
-    if metadata_path.is_file():
-        metadata = metadata_path.read_text(encoding="utf-8")
-        if "$project-agent-workflow" not in metadata:
+    for _host, skill_root in installed_hosts:
+        skill_entrypoint = skill_root / "SKILL.md"
+        if skill_entrypoint.is_file():
+            text = skill_entrypoint.read_text(encoding="utf-8")
+            if not text.startswith("---\n"):
+                errors.append("SKILL.md is missing YAML frontmatter")
+            if not re.search(r"(?m)^name:\s*project-agent-workflow\s*$", text):
+                errors.append("SKILL.md has an unexpected skill name")
+            if not re.search(r"(?m)^description:\s*\S", text):
+                errors.append("SKILL.md is missing a non-empty description")
+        metadata_path = skill_root / "agents" / "openai.yaml"
+        if metadata_path.is_file() and "$project-agent-workflow" not in metadata_path.read_text(encoding="utf-8"):
             errors.append("agents/openai.yaml default prompt does not mention the skill")
 
     policy_path = root / ".agents" / "policies" / "registry-policy.json"
@@ -186,13 +217,22 @@ def main() -> int:
             if policy.get("schema_version") != 1:
                 errors.append("registry policy schema_version must be 1")
 
-    managed_text_files = [
-        path
-        for path in skill_root.rglob("*")
-        if path.is_file()
-        and not path.is_symlink()
-        and path.suffix.lower() in {".md", ".yaml", ".yml", ".json", ".py", ".sh"}
-    ]
+    preferences_path = agents_root / "preferences.json"
+    if preferences_path.exists():
+        try:
+            load_preferences(preferences_path)
+        except ValueError as exc:
+            errors.append(f"invalid shared preferences: {exc}")
+
+    managed_text_files = []
+    for _host, skill_root in installed_hosts:
+        managed_text_files.extend(
+            path
+            for path in skill_root.rglob("*")
+            if path.is_file()
+            and not path.is_symlink()
+            and path.suffix.lower() in {".md", ".yaml", ".yml", ".json", ".py", ".sh"}
+        )
     managed_text_files.extend(
         path
         for path in expected
@@ -211,33 +251,51 @@ def main() -> int:
             if pattern.search(text):
                 errors.append(f"secret-like content found in {path.relative_to(root)}")
 
-    for relative in (
+    executable_files = (
         "install.sh",
         "scripts/ensure_parent_tracking.py",
+        "scripts/install.py",
         "scripts/install.sh",
         "scripts/validate_registry.py",
         "scripts/verify_install.py",
-    ):
-        path = skill_root / relative
-        if path.is_file() and not os.access(path, os.X_OK):
-            errors.append(f"installed script is not executable: {path.relative_to(root)}")
+    )
+    for _host, skill_root in installed_hosts:
+        for relative_path in executable_files:
+            path = skill_root / relative_path
+            if path.is_file():
+                if not os.access(path, os.X_OK):
+                    errors.append(f"installed script is not executable: {path.relative_to(root)}")
+                if path.stat().st_mode & 0o022:
+                    errors.append(f"installed executable is group/world-writable: {path.relative_to(root)}")
 
-    if skill_root.is_dir():
-        for path in sorted(item for item in agents_root.rglob("*") if item.is_file()):
-            rel_path = path.relative_to(root).as_posix()
-            ignored = subprocess.run(
-                ["git", "-C", str(root), "check-ignore", "--no-index", "-q", "--", rel_path],
-                check=False,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-                text=True,
-            )
-            if ignored.returncode == 0:
-                errors.append(f"parent Git still ignores managed file: {rel_path}")
-            elif ignored.returncode != 1:
-                errors.append(
-                    f"could not evaluate Git ignore state for {rel_path}: {ignored.stderr.strip()}"
+    managed_roots = [
+        agents_root,
+        *(
+            skill_root
+            for host, skill_root in installed_hosts
+            if host.owned_root != ".agents"
+        ),
+    ]
+    for managed_root in managed_roots:
+        if managed_root.is_dir() and not managed_root.is_symlink():
+            for path in sorted(item for item in managed_root.rglob("*") if item.is_file()):
+                rel_path = path.relative_to(root).as_posix()
+                ignored = subprocess.run(
+                    [
+                        "git", "-C", str(root), "check-ignore", "--no-index",
+                        "-q", "--", rel_path,
+                    ],
+                    check=False,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                    text=True,
                 )
+                if ignored.returncode == 0:
+                    errors.append(f"parent Git still ignores managed file: {rel_path}")
+                elif ignored.returncode != 1:
+                    errors.append(
+                        f"could not evaluate Git ignore state for {rel_path}: {ignored.stderr.strip()}"
+                    )
 
     if errors:
         for error in errors:

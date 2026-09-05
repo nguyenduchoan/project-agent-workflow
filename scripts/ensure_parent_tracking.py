@@ -11,14 +11,36 @@ import sys
 import tempfile
 from pathlib import Path
 
+sys.dont_write_bytecode = True
+
+from registry.hosts import HOSTS, validate_registry
+from registry.findings import ConfigurationError
+
 
 BEGIN = "# project-agent-workflow: begin"
 END = "# project-agent-workflow: end"
-BLOCK_LINES = (BEGIN, "!/.agents/", "!/.agents/**", END)
+LEGACY_BLOCK_LINES = (BEGIN, "!/.agents/", "!/.agents/**", END)
 
 
 class TrackingError(RuntimeError):
     pass
+
+
+def managed_block_lines() -> tuple[str, ...]:
+    validate_registry()
+    lines = [BEGIN, "!/.agents/", "!/.agents/**"]
+    for host in HOSTS:
+        if host.owned_root == ".agents":
+            continue
+        components = Path(host.destination).parts
+        for index in range(1, len(components) + 1):
+            current = "/".join(components[:index])
+            lines.append(f"!/{current}/")
+            if index < len(components):
+                lines.append(f"/{current}/*")
+        lines.append(f"!/{host.destination}/**")
+    lines.append(END)
+    return tuple(lines)
 
 
 def git_root(candidate: Path) -> Path:
@@ -55,22 +77,23 @@ def desired_content(path: Path) -> tuple[str, str, int]:
     newline = "\r\n" if "\r\n" in original and "\n" not in original.replace("\r\n", "") else "\n"
     remaining = original
     action = "append"
+    block_lines = managed_block_lines()
     if begin_count == 1:
         block_pattern = re.compile(
-            rf"(?m)^{re.escape(BEGIN)}\r?\n"
-            rf"!/\.agents/\r?\n"
-            rf"!/\.agents/\*\*\r?\n"
-            rf"{re.escape(END)}(?:\r?\n|$)"
+            rf"(?ms)^{re.escape(BEGIN)}\r?\n.*?^{re.escape(END)}(?:\r?\n|$)"
         )
         matches = list(block_pattern.finditer(original))
         if len(matches) != 1:
             raise TrackingError("managed .gitignore block was edited; reconcile it manually")
         match = matches[0]
+        existing_lines = tuple(match.group(0).rstrip("\r\n").splitlines())
+        if existing_lines not in {LEGACY_BLOCK_LINES, block_lines}:
+            raise TrackingError("managed .gitignore block was edited; reconcile it manually")
         remaining = original[: match.start()] + original[match.end() :]
         action = "move-to-end"
 
     prefix = remaining.rstrip("\r\n")
-    block = newline.join(BLOCK_LINES) + newline
+    block = newline.join(block_lines) + newline
     desired = f"{prefix}{newline if prefix else ''}{block}"
     if desired == original:
         action = "unchanged"
@@ -125,7 +148,7 @@ def main() -> int:
             print(f"parent tracking: would {action} managed block in {path}")
         else:
             print(f"parent tracking: preflight allows {action} in {path}")
-    except (OSError, TrackingError) as exc:
+    except (ConfigurationError, OSError, TrackingError) as exc:
         print(f"parent tracking: ERROR: {exc}", file=sys.stderr)
         return 1
     return 0

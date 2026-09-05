@@ -11,6 +11,11 @@ from pathlib import Path
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PACKAGE_ROOT / "scripts"))
+
+from registry.findings import ConfigurationError  # noqa: E402
+from registry.hosts import HOSTS, validate_registry  # noqa: E402
+
 MANIFEST_PATH = PACKAGE_ROOT / "skill-manifest.txt"
 RUNTIME_ROOT_FILES = {"LICENSE", "SKILL.md", "VERSION", "install.sh", "skill-manifest.txt"}
 RUNTIME_DIRECTORIES = ("agents", "assets", "references", "scripts")
@@ -29,7 +34,9 @@ REQUIRED_RELEASE_FILES = (
     "skill-manifest.txt",
     "tests/assemble_skill.py",
     "tests/test_install.sh",
+    "tests/test_installer_components.py",
     "tests/test_package.py",
+    "tests/test_registry_paths.py",
     "tests/test_validator_architecture_gate.py",
     "tests/test_validator_git_metadata.py",
     "tests/test_validator_markdown.py",
@@ -163,6 +170,18 @@ def verify_skill_metadata(errors: list[str]) -> None:
                 errors.append("registry policy schema_version must be 1")
 
 
+def verify_host_registry(errors: list[str], entries: list[str]) -> None:
+    try:
+        validate_registry()
+    except ConfigurationError as exc:
+        errors.append(f"invalid trusted host registry: {exc}")
+        return
+    if not HOSTS:
+        errors.append("trusted host registry must not be empty")
+    if "scripts/registry/hosts.py" not in entries:
+        errors.append("trusted host registry is absent from skill-manifest.txt")
+
+
 def main() -> int:
     errors: list[str] = []
     entries = manifest_entries(errors)
@@ -202,6 +221,7 @@ def main() -> int:
                 errors.append(f"secret-like content found in {relative(path)}")
 
     verify_skill_metadata(errors)
+    verify_host_registry(errors, entries)
 
     executable_paths = [PACKAGE_ROOT / "install.sh"]
     executable_paths.extend((PACKAGE_ROOT / "scripts").glob("*.sh"))
@@ -209,8 +229,11 @@ def main() -> int:
     executable_paths.extend((PACKAGE_ROOT / "tests").glob("*.sh"))
     executable_paths.extend((PACKAGE_ROOT / "tests").glob("*.py"))
     for path in sorted(set(executable_paths)):
-        if path.is_file() and not os.access(path, os.X_OK):
-            errors.append(f"script is not executable: {relative(path)}")
+        if path.is_file():
+            if not os.access(path, os.X_OK):
+                errors.append(f"script is not executable: {relative(path)}")
+            if path.stat().st_mode & 0o022:
+                errors.append(f"script is group/world-writable: {relative(path)}")
 
     if errors:
         for error in sorted(set(errors)):

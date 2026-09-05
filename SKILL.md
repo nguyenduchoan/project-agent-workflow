@@ -85,3 +85,27 @@ The default installer writes the workflow below the selected repository's
 `.gitignore` so the parent Git repository can track the complete `.agents` tree.
 It does not modify user-level Codex configuration, create a nested Git repository,
 install Git hooks, or stage/commit files.
+
+## Host and language compatibility
+
+The installer uses a trusted, extensible host registry. Codex is first-class at
+`.agents/skills/project-agent-workflow`; Claude Code is first-class at
+`.claude/skills/project-agent-workflow`. Other Agent Skills hosts require a
+future adapter. Workflow state is shared and host-neutral under `.agents`.
+
+Install with repeatable `--host <id>`, `--host all`, or select multiple hosts in an
+interactive TTY; no-TTY automation must pass `--host`. A shared project preference
+in `.agents/preferences.json` may set `language.responses` and
+`language.generated_documents` using a BCP-47-style tag (for example `vi`, `en`,
+`ja`, or `pt-BR`). User instructions always override this default, and existing
+document language is preserved when `preserve_existing_document_language` is true.
+Machine-readable metadata headings and enum values such as `LIGHT`, `STANDARD`,
+`STRICT`, `none`, `possible`, and `confirmed` are never translated.
+
+Resolve language in this priority order: explicit language requested by the user
+for the current task; future task-specific explicit language metadata; the shared
+project preference; the language of an existing document when preservation is
+appropriate; then fallback `en`. Apply the chosen language to responses and
+narrative content in generated workflow artifacts, but keep code, commands,
+identifiers, metadata keys, protocols, schema literals, and canonical values
+unchanged.

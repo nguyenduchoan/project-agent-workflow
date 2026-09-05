@@ -7,50 +7,85 @@ working directory. Requirements are Git, a POSIX-compatible shell, and Python
 3.10 or newer for validation.
 
 Run one command from a new project, using the absolute path of a trusted checkout
-of this skill:
+of this skill. In an interactive TTY, the installer asks for hosts and a shared
+language preference. Automation must select hosts explicitly:
 
 ```sh
-bash /absolute/path/to/project-agent-workflow/install.sh
+bash /absolute/path/to/project-agent-workflow/install.sh --host codex --language en
 ```
 
 To target another repository explicitly:
 
 ```sh
-bash /absolute/path/to/project-agent-workflow/install.sh --project /path/to/repository
+bash /absolute/path/to/project-agent-workflow/install.sh \
+  --host codex --project /path/to/repository
 ```
+
+List trusted built-in hosts with `--list-hosts`. The first-class adapters are
+Codex (`.agents/skills/project-agent-workflow`) and Claude Code
+(`.claude/skills/project-agent-workflow`). Workflow state remains shared and
+host-neutral under `.agents`; host packages only provide discovery files.
+
+Repeat `--host` for multiple selections or use `--host all`. `all` expands to the
+current trusted registry before preflight and is not itself a host. A no-TTY run
+without `--host` fails instead of blocking or silently choosing Codex.
+
+Use any validated BCP-47-style language tag:
+
+```sh
+bash /absolute/path/to/project-agent-workflow/install.sh \
+  --host all --language pt-BR --project /path/to/repository
+```
+
+Interactive installs prompt for language. Fresh non-interactive installs default
+deterministically to `en` when `--language` is absent. Existing preferences are
+preserved without the flag; an explicit flag updates only the shared language
+fields and preserves unrelated JSON keys.
 
 A positional project path is equivalent and is supported by both wrappers:
 
 ```sh
-bash /absolute/path/to/project-agent-workflow/scripts/install.sh /path/to/repository
+bash /absolute/path/to/project-agent-workflow/scripts/install.sh \
+  --host codex /path/to/repository
 ```
 
 Inspect planned changes without writing:
 
 ```sh
-bash /absolute/path/to/project-agent-workflow/install.sh --dry-run
+bash /absolute/path/to/project-agent-workflow/install.sh --host all --dry-run
 ```
 
 ## Safety contract
 
 - The target must resolve to a Git repository root.
-- Workflow files stay below `<repo>/.agents`. The only additional write is a
+- Shared workflow files stay below `<repo>/.agents`; selected host discovery
+  packages use only trusted registered destinations. The only additional write is a
   marked allow block in the repository-root `.gitignore`:
 
   ```gitignore
   # project-agent-workflow: begin
   !/.agents/
   !/.agents/**
+  !/.claude/
+  /.claude/*
+  !/.claude/skills/
+  /.claude/skills/*
+  !/.claude/skills/project-agent-workflow/
+  !/.claude/skills/project-agent-workflow/**
   # project-agent-workflow: end
   ```
 - A symlink in a managed destination path stops installation.
 - A missing file is created atomically; an identical file is left unchanged.
 - A different existing file is a conflict and stops the entire preflight before
   any file is written.
+- Every selected host and the shared preference change pass one complete preflight
+  before mutation, preventing a later-host conflict from causing partial install.
 - Existing `.gitignore` content is preserved. Missing or canonical managed blocks
   are appended/moved to the end; malformed or duplicated markers fail closed.
-- The installer never edits `AGENTS.md`, `.git/hooks`, user-level Codex
-  directories, or global Git configuration, and never stages or commits files.
+- The installer never accepts an arbitrary destination, executes host/preference
+  data, edits `AGENTS.md`, `.git/hooks`, `.claude/settings.json`, `.claude/hooks`,
+  `.claude/commands`, user-level host directories, or global Git configuration,
+  and never stages or commits files.
 - It never pushes, uses `sudo`, or requires runtime network access.
 - The installer does not copy project-specific task history, architecture state,
   legacy exceptions, credentials, or runtime evidence.
@@ -61,23 +96,24 @@ ownership by deleting or overwriting project state automatically.
 
 ## Result
 
-The installation adds the skill at
-`.agents/skills/project-agent-workflow` and initializes generic task,
-architecture, policy, and review-report templates under `.agents`. Codex discovers
-the skill from the repository-scoped `.agents/skills` location. The full `.agents`
-tree is intended to be reviewed, staged, committed, and synchronized by the parent
-repository.
+The installation initializes generic task, architecture, policy, and review-report
+templates under `.agents`, plus the selected host discovery packages. Shared
+language defaults are stored in `.agents/preferences.json`; structured metadata
+keys and enum values remain canonical and language-independent.
 
-Run the post-install check:
+Run the post-install check from either selected host package, for example:
 
 ```sh
 python3 .agents/skills/project-agent-workflow/scripts/verify_install.py --project .
 ```
 
-Restart Codex only if the newly installed skill does not appear automatically.
+Restart the selected host only if the newly installed skill does not appear
+automatically.
 
 After reviewing the generated files, stage them in the parent repository:
 
 ```sh
-git add .gitignore .agents
+git add .gitignore .agents .claude/skills/project-agent-workflow
 ```
+
+Omit the `.claude` path when Claude Code was not selected.

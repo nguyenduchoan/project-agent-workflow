@@ -80,6 +80,30 @@ class PackageTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("- Stale after days:", template)
 
+    def test_validator_entrypoint_is_orchestration_sized_and_modules_are_shipped(self) -> None:
+        entrypoint = PACKAGE_ROOT / "scripts/validate_registry.py"
+        self.assertLessEqual(len(entrypoint.read_text(encoding="utf-8").splitlines()), 400)
+        entries = {entry.as_posix() for entry in manifest_entries()}
+        for module in (
+            "architecture.py",
+            "findings.py",
+            "git.py",
+            "paths.py",
+            "policy.py",
+            "records.py",
+            "secrets.py",
+        ):
+            self.assertIn(f"scripts/registry/{module}", entries)
+
+    def test_docs_define_hosts_language_priority_and_canonical_metadata(self) -> None:
+        readme = (PACKAGE_ROOT / "README.md").read_text(encoding="utf-8")
+        skill = (PACKAGE_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("| Codex | First-class |", readme)
+        self.assertIn("| Claude Code | First-class |", readme)
+        self.assertIn(".agents/preferences.json", readme)
+        self.assertIn("explicit language requested by the user", skill)
+        self.assertIn("Machine-readable metadata headings", skill)
+
 
 if __name__ == "__main__":
     unittest.main()

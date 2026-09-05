@@ -3,10 +3,10 @@
 A repository-scoped Agent Skill for durable task records, progressive architecture
 context, review evidence, and risk-based architecture gates.
 
-The installer puts both the skill and its generic workflow under the target
-repository's `.agents` directory. The parent Git repository tracks the complete
-tree, so a normal clone, branch, pull request, or merge carries the same workflow
-to every contributor.
+The installer keeps generic workflow state under the target repository's `.agents`
+directory and copies the skill to each selected trusted host discovery path. The
+parent Git repository tracks the complete managed state, so a normal clone,
+branch, pull request, or merge carries the same workflow to every contributor.
 
 ## Why this exists
 
@@ -45,30 +45,74 @@ POSIX-compatible environment.
 
 ## Basic usage
 
-Review or clone a trusted release of this repository. Install into the current Git
-repository:
+Review or clone a trusted release of this repository. In an interactive TTY,
+omitting `--host` prompts for hosts and a shared language. Deterministic
+automation should select both explicitly:
 
 ```sh
-./scripts/install.sh .
+./scripts/install.sh --host codex --language en .
 ```
 
 Or install into another Git repository:
 
 ```sh
-./scripts/install.sh /path/to/project
+./scripts/install.sh --host all --language vi /path/to/project
 ```
 
 The root wrapper and named option remain supported for backward compatibility:
 
 ```sh
-./install.sh --project /path/to/project
+./install.sh --project /path/to/project --host codex
 ```
 
 Preview the result without writing:
 
 ```sh
-./scripts/install.sh --dry-run /path/to/project
+./scripts/install.sh --host all --dry-run /path/to/project
 ```
+
+`--list-hosts` shows the trusted registry. Codex and Claude Code are first-class
+adapters at `.agents/skills/project-agent-workflow` and
+`.claude/skills/project-agent-workflow`; workflow state remains shared and
+host-neutral under `.agents`. The optional BCP-47-style language preference is
+shared in `.agents/preferences.json`; user instructions and existing-document
+language take precedence where documented.
+
+## Host compatibility
+
+| Host | Status | Discovery path |
+|---|---|---|
+| Codex | First-class | `.agents/skills/project-agent-workflow` |
+| Claude Code | First-class | `.claude/skills/project-agent-workflow` |
+| Other Agent Skills hosts | Adapter-based | Host-specific; not yet implemented |
+
+Host adapters provide discovery and packaging only. They do not duplicate task,
+architecture, policy, review, or preference state. Add future hosts through the
+trusted package-owned registry rather than accepting destination paths from CLI
+input.
+
+## Shared language preference
+
+Interactive installation asks for a language after host selection. Non-interactive
+installation accepts any validated BCP-47-style tag through `--language <tag>`;
+the examples `vi` and `en` are shortcuts, not a closed language list. A fresh
+non-interactive installation without this flag deterministically uses `en`.
+Existing `.agents/preferences.json` values are preserved unless `--language`
+explicitly requests a change, and unrelated preference keys are retained.
+
+Hosts resolve language in this order:
+
+1. Language explicitly requested by the user for the current task.
+2. Task-specific explicit language metadata, if a future schema introduces it.
+3. `.agents/preferences.json`.
+4. Existing document language when preservation is appropriate.
+5. Fallback language (`en`).
+
+The preference guides responses and narrative content in generated tasks,
+architecture records, reviews, workflow documentation, summaries, and reports.
+It never translates code, commands, identifiers, protocol/schema literals,
+machine-readable metadata headings, or canonical enum values such as `LIGHT`,
+`STANDARD`, `STRICT`, `active`, `none`, `possible`, and `confirmed`.
 
 Validate an installed registry. Architecture comparison runs automatically when a
 safe local Git base can be resolved:
@@ -82,8 +126,10 @@ The installer deliberately does not stage or commit. Review the generated files,
 then add them through the target repository's normal process:
 
 ```sh
-git add .gitignore .agents
+git add .gitignore .agents .claude/skills/project-agent-workflow
 ```
+
+Omit the `.claude` path when Claude Code was not selected.
 
 Prefer committing the generated tree as one focused commit. Roll back a committed
 installation through the repository's normal `git revert` review flow. Before
@@ -185,20 +231,26 @@ The validator never rewrites records automatically.
 ```text
 .agents/
 ├── skills/project-agent-workflow/
+├── preferences.json
 ├── tasks/{active,history,templates}/
 ├── architecture/{branches,changes,templates}/
 ├── policies/
 └── reviews/templates/
+
+.claude/
+└── skills/project-agent-workflow/  # when Claude Code is selected
 ```
 
-The root `.gitignore` receives one marked allow block so `.agents`, including its
-`scripts` and `assets`, remains visible even when a developer has broad global Git
-ignore rules.
+The root `.gitignore` receives one marked allow block so shared `.agents` state and
+the exact registered Claude Code discovery package remain visible even when a
+developer has broad global Git ignore rules. It does not expose unrelated
+`.claude` files.
 
 ## Safety properties
 
 - Target discovery is anchored to the target Git root.
-- Writes are limited to `.agents` plus the marked root `.gitignore` block.
+- Writes are limited to shared `.agents`, selected registered discovery roots,
+  and the marked root `.gitignore` block.
 - The complete manifest, conflict, and symlink preflight runs before the first
   write.
 - Existing different files are never overwritten.
@@ -237,9 +289,10 @@ python3 -m unittest discover -s tests -p 'test_*.py'
 ```
 
 The end-to-end suite creates temporary Git repositories and tests fresh install,
-dry-run, idempotency, manifest integrity, ignore precedence, conflict refusal,
-symlink boundaries, nested-Git refusal, architecture gates, broken links, and
-secret detection. CI also assembles the manifest-locked artifact into a directory
+multi-host selection, shared language preferences, dry-run, idempotency, manifest
+integrity, permission drift, ignore precedence, atomic conflict refusal, symlink
+boundaries, nested-Git refusal, architecture gates, broken links, and secret
+detection. CI also assembles the manifest-locked artifact into a directory
 named `project-agent-workflow` and runs a commit-pinned Agent Skills reference
 validator. Package verification, validator tests, and installer tests run on both
 Ubuntu and macOS; the official reference-validator job runs once on Ubuntu.

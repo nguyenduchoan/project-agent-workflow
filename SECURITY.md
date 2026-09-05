@@ -26,9 +26,15 @@ surprising filesystem input. It therefore:
 - rejects duplicate, missing, symlinked, absolute, and traversal manifest input
   before writing;
 - refuses symlinks in managed source or destination paths;
-- completes conflict checks before writing;
+- completes all selected-host, preference, conflict, permission, and tracking
+  checks before writing;
 - creates missing files without overwriting an existing path;
-- changes only `.agents` and one marked block in the root `.gitignore`;
+- changes only shared `.agents`, selected registered host discovery roots, and one
+  marked block in the root `.gitignore`;
+- writes host discovery packages only to trusted registered destinations under
+  `.agents/skills/project-agent-workflow` or `.claude/skills/project-agent-workflow`;
+- stores shared language preference only as validated data in `.agents/preferences.json`;
+- rejects unknown host IDs and never accepts arbitrary destination paths;
 - never installs hooks, modifies user-level configuration, stages, commits, or
   executes commands stored in registry records.
 
@@ -53,6 +59,9 @@ limited to managed Markdown records below `.agents/architecture/branches` and
 targets, ambiguous IDs, and every symlink component are rejected before record
 content is used as evidence. No registry field is concatenated into or executed as
 a shell command.
+Language tags and preferences are untrusted data too. The installer validates JSON
+shape, language-tag length/syntax, and boolean types without `source`, `eval`, or
+shell interpolation; structured workflow keys and enums remain canonical.
 Nevertheless, this validator is a guardrail rather than a complete DLP or secret
 scanner; use gitleaks, trufflehog, or an approved enterprise scanner where the
 project requires broader coverage.
