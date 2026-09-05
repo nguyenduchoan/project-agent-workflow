@@ -29,20 +29,46 @@ deterministic tests and does not use network time.
 
 ## Language resolution
 
-Treat `.agents/preferences.json` as host-neutral project data. Resolve response
-and generated-document language in this order: an explicit current user request,
-future task-specific language metadata, the shared preference, the language of an
-existing document when preservation is appropriate, then fallback `en`. Current
-user instructions always override stored defaults.
+Treat `.agents/preferences.json` as host-neutral project data. Explicit user language always wins over task or stored defaults.
 
-When `preserve_existing_document_language` is true, keep the established language
-of a document being edited unless the user explicitly requests translation. Use
-`language.generated_documents` for narrative content in new task, architecture,
-review, release, incident, summary, and report artifacts. Keep parser-facing
-metadata headings and canonical enum values language-independent; never translate
-`ID`, `Status`, `Branch`, `Architecture impact`, `LIGHT`, `STANDARD`, `STRICT`,
-`active`, `none`, `possible`, or `confirmed`. Do not duplicate templates by
-language.
+### Assistant responses
+
+Resolve normal assistant responses in this order:
+
+1. Explicit user language for the current task or conversation.
+2. Task-specific language override, if a future schema supports one.
+3. `.agents/preferences.json` `language.responses`.
+4. Fallback `en`.
+
+### New workflow documents
+
+Resolve narrative content for a new task, architecture record, review, release,
+incident, summary, or report in this order:
+
+1. Explicit user language for the current task.
+2. Task-specific language override, if supported.
+3. `.agents/preferences.json` `language.generated_documents`.
+4. Fallback `en`.
+
+### Existing document edits
+
+When `preserve_existing_document_language` is `true`, resolve narrative edits in
+this order:
+
+1. Explicit user language for the current task.
+2. Task-specific language override, if supported.
+3. The existing document language.
+4. `.agents/preferences.json` `language.generated_documents`.
+5. Fallback `en`.
+
+When `preserve_existing_document_language` is `false`, use the new-workflow-document
+order. This prevents a project default from silently mixing languages into an
+existing document while still allowing an explicit translation request.
+
+Keep parser-facing metadata headings and canonical enum values language-independent;
+never translate `ID`, `Mode`, `Status`, `Branch`, `Architecture impact`, `LIGHT`,
+`STANDARD`, `STRICT`, `active`, `closed`, `none`, `possible`, or `confirmed`. Do not
+duplicate templates by language.
 
 ## Choose a mode
 

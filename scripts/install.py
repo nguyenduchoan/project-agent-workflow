@@ -86,15 +86,23 @@ def runtime_files(source: Path, entries: list[str]) -> list[tuple[Path, str]]:
     return result
 
 
-def check_file(src: Path, dst: Path, repo: Path) -> None:
+def check_file(
+    src: Path,
+    dst: Path,
+    repo: Path,
+    *,
+    changed_during_install: bool = False,
+) -> None:
     assert_no_symlink(dst, repo)
     if dst.exists():
         if not dst.is_file() or not os.path.isfile(dst):
             raise ValueError(f"managed destination is not a regular file: {dst}")
         if not os.path.samefile(src, dst) and not _same_content(src, dst):
+            if changed_during_install:
+                raise ValueError(f"managed destination changed during install: {dst}")
             raise ValueError(f"conflict: existing file differs and will not be overwritten: {dst}")
-        if src.stat().st_mode & 0o111 and dst.stat().st_mode & 0o022:
-            raise ValueError(f"managed executable is group/world-writable: {dst}")
+        if src.suffix.lower() in {".py", ".sh"} and dst.stat().st_mode & 0o022:
+            raise ValueError(f"managed runtime code is group/world-writable: {dst}")
 
 
 def _same_content(left: Path, right: Path) -> bool:
@@ -115,6 +123,7 @@ def check_tree(root: Path, manifest: set[str], repo: Path) -> None:
 
 def describe_or_write(src: Path, dst: Path, repo: Path, dry_run: bool) -> None:
     if dst.exists():
+        check_file(src, dst, repo, changed_during_install=True)
         print(f"project-agent-workflow-installer: unchanged {dst.relative_to(repo)}")
         return
     if dry_run:
@@ -210,7 +219,7 @@ def interactive_hosts() -> list[str]:
 
 
 def interactive_language() -> str:
-    print("\nLanguage preference (shared across installed hosts):\n\n  [1] Vietnamese (vi)\n  [2] English (en)\n  [3] System/default language\n  [4] Other language tag\n\nSelection:")
+    print("\nLanguage preference (shared across installed hosts):\n\n  [1] Vietnamese (vi)\n  [2] English (en)\n  [3] Default / English (en)\n  [4] Other language tag\n\nSelection:")
     choice = input("> ").strip()
     if choice == "1":
         return "vi"
@@ -287,7 +296,10 @@ def main() -> int:
             preferences = with_language(existing_preferences, language)
             print(f"project-agent-workflow-installer: Language preference: {language}")
         tracking = source / "scripts/ensure_parent_tracking.py"
-        subprocess.run([sys.executable, str(tracking), "--project", str(repo), "--check"], check=True)
+        tracking_command = [sys.executable, str(tracking), "--project", str(repo)]
+        for host in hosts:
+            tracking_command.extend(["--host", host.id])
+        subprocess.run([*tracking_command, "--check"], check=True)
         if language is not None or preferences_path.exists():
             if preferences_path.exists() and not preferences_path.is_file():
                 raise ValueError("preferences path must be a regular file")
@@ -309,7 +321,7 @@ def main() -> int:
             elif language is not None:
                 print("project-agent-workflow-installer: unchanged .agents/preferences.json")
         if not args.dry_run:
-            subprocess.run([sys.executable, str(tracking), "--project", str(repo), "--apply"], check=True)
+            subprocess.run([*tracking_command, "--apply"], check=True)
         else:
             print("project-agent-workflow-installer: dry-run shared tracking check")
         for src, relative in template_files:
@@ -322,7 +334,10 @@ def main() -> int:
             print("project-agent-workflow-installer: dry-run complete; no files written")
         else:
             verifier = repo / hosts[0].destination / "scripts/verify_install.py"
-            subprocess.run([sys.executable, str(verifier), "--project", str(repo)], check=True)
+            verification_command = [sys.executable, str(verifier), "--project", str(repo)]
+            for host in hosts:
+                verification_command.extend(["--host", host.id])
+            subprocess.run(verification_command, check=True)
             print(f"project-agent-workflow-installer: installation complete for {repo}")
         return 0
     except (ConfigurationError, ValueError, OSError, subprocess.CalledProcessError) as exc:

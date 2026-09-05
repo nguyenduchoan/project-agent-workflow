@@ -29,9 +29,11 @@ def validate_language_tag(value: str) -> str:
 
 
 def load_preferences(path) -> dict[str, Any]:
+    if path.is_symlink():
+        raise ValueError("preferences path must be a regular file")
     if not path.exists():
         return {}
-    if path.is_symlink() or not path.is_file():
+    if not path.is_file():
         raise ValueError("preferences path must be a regular file")
     try:
         value = json.loads(path.read_text(encoding="utf-8"))

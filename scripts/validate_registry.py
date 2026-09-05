@@ -22,6 +22,7 @@ from registry.findings import ConfigurationError, Finding  # noqa: E402
 from registry.git import current_git_branch, resolve_git_base, resolve_validation_root  # noqa: E402
 from registry.paths import data_files, has_symlink_component  # noqa: E402
 from registry.policy import load_policy  # noqa: E402
+from registry.preferences import load_preferences  # noqa: E402
 from registry.records import scan_context_budget, scan_links, scan_symlinks, scan_tasks  # noqa: E402
 from registry.secrets import scan_trust_and_secrets  # noqa: E402
 
@@ -70,6 +71,12 @@ def validate_project(args: argparse.Namespace) -> tuple[list[Finding], list[str]
     notes: list[str] = []
     warnings: list[str] = []
     findings: list[Finding] = []
+    preferences_path = agents_root / "preferences.json"
+    if preferences_path.exists() or preferences_path.is_symlink():
+        try:
+            load_preferences(preferences_path)
+        except ValueError as exc:
+            findings.append(Finding("preferences", "preferences.json", str(exc)))
     findings.extend(scan_symlinks(agents_root))
     task_findings, task_records = scan_tasks(
         agents_root, git_root, policy, validation_date, warnings

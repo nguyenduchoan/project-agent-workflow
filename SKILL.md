@@ -97,15 +97,18 @@ Install with repeatable `--host <id>`, `--host all`, or select multiple hosts in
 interactive TTY; no-TTY automation must pass `--host`. A shared project preference
 in `.agents/preferences.json` may set `language.responses` and
 `language.generated_documents` using a BCP-47-style tag (for example `vi`, `en`,
-`ja`, or `pt-BR`). User instructions always override this default, and existing
-document language is preserved when `preserve_existing_document_language` is true.
-Machine-readable metadata headings and enum values such as `LIGHT`, `STANDARD`,
-`STRICT`, `none`, `possible`, and `confirmed` are never translated.
+`ja`, or `pt-BR`). User instructions always override stored defaults.
 
-Resolve language in this priority order: explicit language requested by the user
-for the current task; future task-specific explicit language metadata; the shared
-project preference; the language of an existing document when preservation is
-appropriate; then fallback `en`. Apply the chosen language to responses and
-narrative content in generated workflow artifacts, but keep code, commands,
+Resolve assistant responses from the explicit user request, future task-specific
+language metadata, `language.responses`, then fallback `en`. Resolve narrative in a
+new workflow document from the explicit user request, future task-specific language
+metadata, `language.generated_documents`, then fallback `en`. When editing an
+existing document and `preserve_existing_document_language` is true, resolve from
+the explicit user request, future task-specific language metadata, the existing
+document language, `language.generated_documents`, then fallback `en`; when false,
+use the new-document order. Apply the result only to responses and narrative
+content. Machine-readable metadata headings and enum values such as `Mode`,
+`Status`, `Architecture impact`, `LIGHT`, `STANDARD`, `STRICT`, `active`, `closed`,
+`none`, `possible`, and `confirmed` are never translated. Keep code, commands,
 identifiers, metadata keys, protocols, schema literals, and canonical values
 unchanged.

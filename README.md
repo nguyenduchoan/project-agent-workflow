@@ -100,19 +100,23 @@ non-interactive installation without this flag deterministically uses `en`.
 Existing `.agents/preferences.json` values are preserved unless `--language`
 explicitly requests a change, and unrelated preference keys are retained.
 
-Hosts resolve language in this order:
+Language resolution depends on the operation:
 
-1. Language explicitly requested by the user for the current task.
-2. Task-specific explicit language metadata, if a future schema introduces it.
-3. `.agents/preferences.json`.
-4. Existing document language when preservation is appropriate.
-5. Fallback language (`en`).
+- Assistant responses use the explicit user request, a supported task override,
+  `language.responses`, then fallback `en`.
+- New workflow-document narrative uses the explicit user request, a supported task
+  override, `language.generated_documents`, then fallback `en`.
+- Existing document edits with `preserve_existing_document_language: true` use the
+  explicit user request, a supported task override, the existing document language,
+  `language.generated_documents`, then fallback `en`. With preservation disabled,
+  they use the new-document order.
 
 The preference guides responses and narrative content in generated tasks,
 architecture records, reviews, workflow documentation, summaries, and reports.
 It never translates code, commands, identifiers, protocol/schema literals,
-machine-readable metadata headings, or canonical enum values such as `LIGHT`,
-`STANDARD`, `STRICT`, `active`, `none`, `possible`, and `confirmed`.
+machine-readable metadata headings, or canonical enum values such as `Mode`,
+`Status`, `Architecture impact`, `LIGHT`, `STANDARD`, `STRICT`, `active`, `closed`,
+`none`, `possible`, and `confirmed`.
 
 Validate an installed registry. Architecture comparison runs automatically when a
 safe local Git base can be resolved:
@@ -121,6 +125,9 @@ safe local Git base can be resolved:
 python3 .agents/skills/project-agent-workflow/scripts/validate_registry.py \
   --project .
 ```
+
+Normal registry validation checks `.agents/preferences.json` when present using the
+same JSON, language-tag, and boolean validation as installation verification.
 
 The installer deliberately does not stage or commit. Review the generated files,
 then add them through the target repository's normal process:
@@ -242,18 +249,23 @@ The validator never rewrites records automatically.
 ```
 
 The root `.gitignore` receives one marked allow block so shared `.agents` state and
-the exact registered Claude Code discovery package remain visible even when a
-developer has broad global Git ignore rules. It does not expose unrelated
-`.claude` files.
+the discovery packages for selected or recognized installed hosts remain visible
+even when a developer has broad global Git ignore rules. A fresh single-host install
+does not add rules for unrelated registered hosts, and host-specific rules do not
+expose unrelated files below the host-owned root.
 
 ## Safety properties
 
 - Target discovery is anchored to the target Git root.
 - Writes are limited to shared `.agents`, selected registered discovery roots,
   and the marked root `.gitignore` block.
-- The complete manifest, conflict, and symlink preflight runs before the first
-  write.
-- Existing different files are never overwritten.
+- The complete manifest, conflict, symlink, runtime-code permission, and tracking
+  preflight runs before the first write.
+- Existing managed files are content- and path-rechecked immediately before they
+  are reported unchanged; a concurrent change fails closed and is not overwritten.
+- Installed `.py` and `.sh` runtime code must not be group- or world-writable.
+- Post-write installer verification is scoped to shared state and selected hosts;
+  `verify_install.py --all-installed-hosts` performs an explicit full audit.
 - Reinstalling the same version is idempotent.
 - It creates no nested Git repository or Git hook, changes no user configuration,
   and performs no staging, commit, push, or network execution.

@@ -60,24 +60,28 @@ bash /absolute/path/to/project-agent-workflow/install.sh --host all --dry-run
 - The target must resolve to a Git repository root.
 - Shared workflow files stay below `<repo>/.agents`; selected host discovery
   packages use only trusted registered destinations. The only additional write is a
-  marked allow block in the repository-root `.gitignore`:
+  marked allow block in the repository-root `.gitignore`. The block always tracks
+  `.agents` and adds narrow host-specific rules only for selected hosts plus
+  recognized already-installed hosts. A fresh Codex-only install therefore has the
+  minimal block:
 
   ```gitignore
   # project-agent-workflow: begin
   !/.agents/
   !/.agents/**
-  !/.claude/
-  /.claude/*
-  !/.claude/skills/
-  /.claude/skills/*
-  !/.claude/skills/project-agent-workflow/
-  !/.claude/skills/project-agent-workflow/**
   # project-agent-workflow: end
   ```
+
+  Selecting or recognizing an installed Claude Code package adds its existing
+  narrow `.claude/skills/project-agent-workflow` rules without exposing unrelated
+  `.claude` files.
 - A symlink in a managed destination path stops installation.
-- A missing file is created atomically; an identical file is left unchanged.
+- Package runtime `.py` and `.sh` files must not be group- or world-writable.
+- A missing file is created atomically; an identical existing file is content- and
+  path-rechecked immediately before it is reported unchanged.
 - A different existing file is a conflict and stops the entire preflight before
-  any file is written.
+  any file is written. If content changes after preflight, the write phase fails
+  closed without overwriting it or writing later hosts.
 - Every selected host and the shared preference change pass one complete preflight
   before mutation, preventing a later-host conflict from causing partial install.
 - Existing `.gitignore` content is preserved. Missing or canonical managed blocks
@@ -101,11 +105,17 @@ templates under `.agents`, plus the selected host discovery packages. Shared
 language defaults are stored in `.agents/preferences.json`; structured metadata
 keys and enum values remain canonical and language-independent.
 
-Run the post-install check from either selected host package, for example:
+The installer runs post-write verification for shared state and only the hosts in
+that installation operation. Run an explicit full audit of every recognized
+installed host with:
 
 ```sh
-python3 .agents/skills/project-agent-workflow/scripts/verify_install.py --project .
+python3 .agents/skills/project-agent-workflow/scripts/verify_install.py \
+  --project . --all-installed-hosts
 ```
+
+Use repeatable `--host <id>` instead when manually verifying a specific operation.
+Normal registry validation also validates `.agents/preferences.json` when present.
 
 Restart the selected host only if the newly installed skill does not appear
 automatically.

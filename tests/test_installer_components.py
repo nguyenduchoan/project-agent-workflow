@@ -97,16 +97,101 @@ class LanguagePreferenceTests(unittest.TestCase):
                 load_preferences(path)
 
     def test_interactive_shortcuts_and_custom_tag(self) -> None:
-        cases = (("1", "vi"), ("2", "en"), ("4", "pt-BR"))
+        cases = (("1", "vi"), ("2", "en"), ("3", "en"), ("4", "pt-BR"))
         for selection, expected in cases:
             responses = [selection] if selection != "4" else [selection, "pt-br"]
+            output = TTYBuffer()
             with self.subTest(selection=selection), mock.patch(
                 "builtins.input", side_effect=responses
-            ):
+            ), mock.patch.object(installer.sys, "stdout", output):
                 self.assertEqual(expected, installer.interactive_language())
+            if selection == "3":
+                self.assertIn("[3] Default / English (en)", output.getvalue())
+
+
+class PermissionValidationTests(unittest.TestCase):
+    def test_runtime_code_rejects_group_or_world_writable_modes(self) -> None:
+        cases = (
+            ("runtime.sh", 0o755, ((0o755, True), (0o775, False), (0o777, False))),
+            ("runtime.py", 0o644, ((0o644, True), (0o664, False), (0o666, False))),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for name, source_mode, modes in cases:
+                source = root / f"source-{name}"
+                destination = root / name
+                source.write_text("runtime\n", encoding="utf-8")
+                destination.write_text("runtime\n", encoding="utf-8")
+                source.chmod(source_mode)
+                for mode, accepted in modes:
+                    with self.subTest(name=name, mode=oct(mode)):
+                        destination.chmod(mode)
+                        if accepted:
+                            installer.check_file(source, destination, root)
+                        else:
+                            with self.assertRaisesRegex(ValueError, "group/world-writable"):
+                                installer.check_file(source, destination, root)
 
 
 class InteractiveInstallerTests(unittest.TestCase):
+    def test_write_phase_rechecks_content_before_unchanged(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="installer-race-test.") as temporary:
+            root = Path(temporary)
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            subprocess.run(["git", "-C", str(root), "config", "user.name", "Test"], check=True)
+            subprocess.run(
+                ["git", "-C", str(root), "config", "user.email", "test@example.invalid"],
+                check=True,
+            )
+            (root / "README.md").write_text("# test\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(root), "add", "README.md"], check=True)
+            subprocess.run(["git", "-C", str(root), "commit", "-qm", "initial"], check=True)
+
+            with mock.patch.object(
+                installer.sys,
+                "argv",
+                ["install.py", "--project", str(root), "--host", "codex"],
+            ):
+                self.assertEqual(0, installer.main())
+
+            managed_file = root.resolve() / ".agents/skills/project-agent-workflow/SKILL.md"
+            claude_root = root.resolve() / ".claude/skills/project-agent-workflow"
+            changed_content = "changed after preflight\n"
+            original_describe_or_write = installer.describe_or_write
+            mutation_applied = False
+
+            def mutate_before_write(
+                source: Path, destination: Path, repo: Path, dry_run: bool
+            ) -> None:
+                nonlocal mutation_applied
+                if destination == managed_file and not mutation_applied:
+                    managed_file.write_text(changed_content, encoding="utf-8")
+                    mutation_applied = True
+                original_describe_or_write(source, destination, repo, dry_run)
+
+            stderr = io.StringIO()
+            with mock.patch.object(
+                installer.sys,
+                "argv",
+                [
+                    "install.py",
+                    "--project",
+                    str(root),
+                    "--host",
+                    "codex",
+                    "--host",
+                    "claude-code",
+                ],
+            ), mock.patch.object(
+                installer, "describe_or_write", side_effect=mutate_before_write
+            ), mock.patch.object(installer.sys, "stderr", stderr):
+                self.assertEqual(1, installer.main())
+
+            self.assertTrue(mutation_applied)
+            self.assertEqual(changed_content, managed_file.read_text(encoding="utf-8"))
+            self.assertFalse(claude_root.exists())
+            self.assertIn("managed destination changed during install", stderr.getvalue())
+
     def test_interactive_multi_select_writes_one_shared_preference(self) -> None:
         with tempfile.TemporaryDirectory(prefix="interactive-installer-test.") as temporary:
             root = Path(temporary)

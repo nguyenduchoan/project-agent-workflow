@@ -13,7 +13,7 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True
 
-from registry.hosts import HOSTS, validate_registry
+from registry.hosts import HOSTS, HostDefinition, expand_host_ids, validate_registry
 from registry.findings import ConfigurationError
 
 
@@ -26,10 +26,10 @@ class TrackingError(RuntimeError):
     pass
 
 
-def managed_block_lines() -> tuple[str, ...]:
+def managed_block_lines(hosts: tuple[HostDefinition, ...]) -> tuple[str, ...]:
     validate_registry()
     lines = [BEGIN, "!/.agents/", "!/.agents/**"]
-    for host in HOSTS:
+    for host in hosts:
         if host.owned_root == ".agents":
             continue
         components = Path(host.destination).parts
@@ -41,6 +41,17 @@ def managed_block_lines() -> tuple[str, ...]:
         lines.append(f"!/{host.destination}/**")
     lines.append(END)
     return tuple(lines)
+
+
+def relevant_hosts(root: Path, selected_ids: list[str]) -> tuple[HostDefinition, ...]:
+    selected = {host.id for host in expand_host_ids(selected_ids)} if selected_ids else set()
+    return tuple(
+        host
+        for host in HOSTS
+        if host.id in selected
+        or (root / host.destination).exists()
+        or (root / host.destination).is_symlink()
+    )
 
 
 def git_root(candidate: Path) -> Path:
@@ -58,7 +69,9 @@ def git_root(candidate: Path) -> Path:
     return root
 
 
-def desired_content(path: Path) -> tuple[str, str, int]:
+def desired_content(
+    path: Path, hosts: tuple[HostDefinition, ...]
+) -> tuple[str, str, int]:
     if path.is_symlink():
         raise TrackingError(f"refusing symlink .gitignore: {path}")
     if path.exists() and not path.is_file():
@@ -77,7 +90,8 @@ def desired_content(path: Path) -> tuple[str, str, int]:
     newline = "\r\n" if "\r\n" in original and "\n" not in original.replace("\r\n", "") else "\n"
     remaining = original
     action = "append"
-    block_lines = managed_block_lines()
+    block_lines = managed_block_lines(hosts)
+    accepted_blocks = {LEGACY_BLOCK_LINES, block_lines, managed_block_lines(HOSTS)}
     if begin_count == 1:
         block_pattern = re.compile(
             rf"(?ms)^{re.escape(BEGIN)}\r?\n.*?^{re.escape(END)}(?:\r?\n|$)"
@@ -87,7 +101,7 @@ def desired_content(path: Path) -> tuple[str, str, int]:
             raise TrackingError("managed .gitignore block was edited; reconcile it manually")
         match = matches[0]
         existing_lines = tuple(match.group(0).rstrip("\r\n").splitlines())
-        if existing_lines not in {LEGACY_BLOCK_LINES, block_lines}:
+        if existing_lines not in accepted_blocks:
             raise TrackingError("managed .gitignore block was edited; reconcile it manually")
         remaining = original[: match.start()] + original[match.end() :]
         action = "move-to-end"
@@ -123,6 +137,7 @@ def write_atomic(path: Path, content: str, mode: int) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", type=Path, default=Path.cwd())
+    parser.add_argument("--host", action="append", default=[])
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--check", action="store_true")
     mode.add_argument("--dry-run", action="store_true")
@@ -134,11 +149,12 @@ def main() -> int:
     args = parse_args()
     try:
         root = git_root(args.project.resolve())
+        hosts = relevant_hosts(root, args.host)
         path = root / ".gitignore"
-        desired, action, mode = desired_content(path)
+        desired, action, mode = desired_content(path, hosts)
         if args.apply and action != "unchanged":
             write_atomic(path, desired, mode)
-            _, verified_action, _ = desired_content(path)
+            _, verified_action, _ = desired_content(path, hosts)
             if verified_action != "unchanged":
                 raise TrackingError(".gitignore update did not reach canonical state")
             print(f"parent tracking: updated {path}")
@@ -148,7 +164,7 @@ def main() -> int:
             print(f"parent tracking: would {action} managed block in {path}")
         else:
             print(f"parent tracking: preflight allows {action} in {path}")
-    except (ConfigurationError, OSError, TrackingError) as exc:
+    except (ConfigurationError, OSError, TrackingError, ValueError) as exc:
         print(f"parent tracking: ERROR: {exc}", file=sys.stderr)
         return 1
     return 0

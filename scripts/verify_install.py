@@ -14,7 +14,7 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 
 from registry.findings import ConfigurationError
-from registry.hosts import HOSTS, validate_registry
+from registry.hosts import HOSTS, expand_host_ids, validate_registry
 from registry.preferences import load_preferences
 
 
@@ -89,6 +89,9 @@ def git_root(candidate: Path) -> Path:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", type=Path, default=Path.cwd())
+    scope = parser.add_mutually_exclusive_group()
+    scope.add_argument("--host", action="append", default=[])
+    scope.add_argument("--all-installed-hosts", action="store_true")
     return parser.parse_args()
 
 
@@ -148,23 +151,32 @@ def main() -> int:
     errors: list[str] = []
     try:
         validate_registry()
-    except ConfigurationError as exc:
-        errors.append(f"invalid trusted host registry: {exc}")
-    installed_hosts = [
-        (host, root / host.destination)
-        for host in HOSTS
-        if (root / host.destination).exists() or (root / host.destination).is_symlink()
-    ]
-    if not installed_hosts:
-        errors.append("no registered host package is installed")
+        scoped_hosts = expand_host_ids(args.host) if args.host else list(HOSTS)
+    except (ConfigurationError, ValueError) as exc:
+        errors.append(f"invalid trusted host selection: {exc}")
+        scoped_hosts = []
+    if args.host:
+        verification_hosts = [
+            (host, root / host.destination)
+            for host in scoped_hosts
+        ]
+    else:
+        verification_hosts = [
+            (host, root / host.destination)
+            for host in scoped_hosts
+            if (root / host.destination).exists()
+            or (root / host.destination).is_symlink()
+        ]
+    if not verification_hosts:
+        errors.append("no registered host package is selected or installed")
 
     expected = [root / item for item in EXPECTED_PROJECT_FILES]
-    for _host, skill_root in installed_hosts:
+    for _host, skill_root in verification_hosts:
         expected.extend(skill_root / item for item in EXPECTED_SKILL_FILES)
 
     if agents_root.is_symlink():
         errors.append("managed .agents root is a symlink")
-    for host, skill_root in installed_hosts:
+    for host, skill_root in verification_hosts:
         if skill_root.is_symlink():
             errors.append(f"installed {host.id} skill root is a symlink")
         elif not skill_root.is_dir():
@@ -172,11 +184,19 @@ def main() -> int:
         else:
             verify_runtime_manifest(skill_root, errors)
 
-    if installed_hosts:
-        tracking_helper = installed_hosts[0][1] / "scripts" / "ensure_parent_tracking.py"
+    if verification_hosts:
+        tracking_helper = Path(__file__).resolve().parent / "ensure_parent_tracking.py"
         if tracking_helper.is_file():
+            tracking_command = [
+                sys.executable,
+                str(tracking_helper),
+                "--project",
+                str(root),
+            ]
+            for host, _skill_root in verification_hosts:
+                tracking_command.extend(["--host", host.id])
             tracking = subprocess.run(
-                [sys.executable, str(tracking_helper), "--project", str(root), "--check"],
+                [*tracking_command, "--check"],
                 check=False,
                 capture_output=True,
                 text=True,
@@ -193,7 +213,7 @@ def main() -> int:
         elif path.stat().st_size == 0:
             errors.append(f"managed file is empty: {path.relative_to(root)}")
 
-    for _host, skill_root in installed_hosts:
+    for _host, skill_root in verification_hosts:
         skill_entrypoint = skill_root / "SKILL.md"
         if skill_entrypoint.is_file():
             text = skill_entrypoint.read_text(encoding="utf-8")
@@ -218,14 +238,14 @@ def main() -> int:
                 errors.append("registry policy schema_version must be 1")
 
     preferences_path = agents_root / "preferences.json"
-    if preferences_path.exists():
+    if preferences_path.exists() or preferences_path.is_symlink():
         try:
             load_preferences(preferences_path)
         except ValueError as exc:
             errors.append(f"invalid shared preferences: {exc}")
 
     managed_text_files = []
-    for _host, skill_root in installed_hosts:
+    for _host, skill_root in verification_hosts:
         managed_text_files.extend(
             path
             for path in skill_root.rglob("*")
@@ -259,20 +279,27 @@ def main() -> int:
         "scripts/validate_registry.py",
         "scripts/verify_install.py",
     )
-    for _host, skill_root in installed_hosts:
+    for _host, skill_root in verification_hosts:
+        for path in skill_root.rglob("*"):
+            if (
+                path.is_file()
+                and not path.is_symlink()
+                and path.suffix.lower() in {".py", ".sh"}
+                and path.stat().st_mode & 0o022
+            ):
+                errors.append(
+                    f"installed runtime code is group/world-writable: {path.relative_to(root)}"
+                )
         for relative_path in executable_files:
             path = skill_root / relative_path
-            if path.is_file():
-                if not os.access(path, os.X_OK):
-                    errors.append(f"installed script is not executable: {path.relative_to(root)}")
-                if path.stat().st_mode & 0o022:
-                    errors.append(f"installed executable is group/world-writable: {path.relative_to(root)}")
+            if path.is_file() and not os.access(path, os.X_OK):
+                errors.append(f"installed script is not executable: {path.relative_to(root)}")
 
     managed_roots = [
         agents_root,
         *(
             skill_root
-            for host, skill_root in installed_hosts
+            for host, skill_root in verification_hosts
             if host.owned_root != ".agents"
         ),
     ]

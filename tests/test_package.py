@@ -98,11 +98,36 @@ class PackageTests(unittest.TestCase):
     def test_docs_define_hosts_language_priority_and_canonical_metadata(self) -> None:
         readme = (PACKAGE_ROOT / "README.md").read_text(encoding="utf-8")
         skill = (PACKAGE_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        workflow = (PACKAGE_ROOT / "references/registry-workflow.md").read_text(
+            encoding="utf-8"
+        )
+        task_template = (
+            PACKAGE_ROOT
+            / "assets/project-template/.agents/tasks/templates/task.md"
+        ).read_text(encoding="utf-8")
         self.assertIn("| Codex | First-class |", readme)
         self.assertIn("| Claude Code | First-class |", readme)
         self.assertIn(".agents/preferences.json", readme)
-        self.assertIn("explicit language requested by the user", skill)
+        self.assertIn("### Assistant responses", workflow)
+        self.assertIn("language.responses", workflow)
+        self.assertIn("### New workflow documents", workflow)
+        self.assertIn("language.generated_documents", workflow)
+        self.assertIn("### Existing document edits", workflow)
+        self.assertIn("preserve_existing_document_language` is `true", workflow)
+        self.assertIn("preserve_existing_document_language` is `false", workflow)
+        self.assertIn("Explicit user language always wins", workflow)
+        existing_edit_rules = workflow.split("### Existing document edits", 1)[1].split(
+            "## Choose a mode", 1
+        )[0]
+        self.assertLess(
+            existing_edit_rules.index("existing document language"),
+            existing_edit_rules.index("`language.generated_documents`"),
+        )
         self.assertIn("Machine-readable metadata headings", skill)
+        for canonical_field in ("Mode", "Status", "Architecture impact"):
+            self.assertIn(f"- {canonical_field}:", task_template)
+        for canonical_value in ("LIGHT", "STANDARD", "STRICT"):
+            self.assertIn(canonical_value, task_template)
 
 
 if __name__ == "__main__":
